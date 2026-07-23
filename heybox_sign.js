@@ -1,8 +1,15 @@
-/*
-小黑盒 - 每日任务
-账号环境变量:
-  heybox_ck=pkey=xxx;x_xhh_tokenid=xxx;
-*/
+/**
+ * 小黑盒 - 每日任务 (含 time_limit 任务支持)
+ *
+ * 改动说明：
+ * 1. 新增 time_limit 任务类型支持（发布内容任务）
+ * 2. 新增 executeTimeLimitTask 函数
+ * 3. 修改任务过滤逻辑，支持所有已实现的任务类型
+ *
+ * 原始项目: https://github.com/yowiv08/heybox
+ * Fork: https://github.com/eiconnor/heybox
+ */
+const crypto = require("crypto");
 const { $, tools } = require("./src/core");
 const {
   DATA_BASE,
@@ -46,6 +53,21 @@ const GAME_COMMENTS_QUERY_BASE = Object.freeze({
   limit: "30",
 });
 
+// ========== 新增: BBS 发帖内容模板 ==========
+const POST_TEMPLATES = {
+  default: [
+    "分享一下我的使用心得，希望对大家有帮助！",
+    "最近在用这个，感觉很不错，推荐给大家。",
+    "记录一下我的使用体验，总体来说很满意。",
+  ],
+};
+
+function generatePostContent(topicName) {
+  const templates = POST_TEMPLATES.default;
+  return templates[Math.floor(Math.random() * templates.length)];
+}
+
+// ========== 工具函数 ==========
 function isOkPayload(payload) {
   return tools.toText(payload?.status) === OK_STATE;
 }
@@ -81,6 +103,7 @@ function extractTaskList(payload) {
         taskId: tools.toText(reportExtra.task_id),
         taskType: tools.toText(item?.type),
         reportTaskType: tools.toText(reportExtra.task_type),
+        reportExtra,
         awardText,
       });
     }
@@ -173,9 +196,12 @@ function isSignTask(task) {
   return task.taskType === "sign";
 }
 
-function isDailyTask(task) {
-  return isSignTask(task) || task.reportTaskType === "daily";
+// 修改: 支持所有已实现的任务类型
+function isSupportedTask(task) {
+  return isSignTask(task) || SUPPORTED_TASK_IDS.has(task.taskId);
 }
+
+const SUPPORTED_TASK_IDS = new Set(["1", "19", "31", "33"]);
 
 async function settleShareTask(task, fetchSnapshotFn, detail) {
   await tools.sleep(SHARE_TASK_SETTLE_MS);
@@ -187,6 +213,7 @@ async function settleShareTask(task, fetchSnapshotFn, detail) {
   return { ok: false, message: `${task.title} 未完成` };
 }
 
+// ========== 签到 ==========
 async function executeSign(client) {
   const signResp = await client.getJson(PATH_SIGN);
   const firstState = tools.toText(signResp?.result?.state);
@@ -206,6 +233,7 @@ async function executeSign(client) {
   return { ok: false, message: tools.toText(finalPayload.msg) || state || "签到失败" };
 }
 
+// ========== 分享任务 ==========
 async function executeSharePost(task, client, fetchSnapshotFn) {
   const feedPayload = await client.getJson(PATH_FEEDS, FEEDS_QUERY_BASE);
   if (!isOkPayload(feedPayload)) return { ok: false, message: `${task.title} 拉取帖子流失败` };
@@ -265,16 +293,81 @@ async function executeShareGameComment(task, client, fetchSnapshotFn) {
   return settleShareTask(task, fetchSnapshotFn, `appid=${game.appid}`);
 }
 
+// ========== 新增: time_limit 任务处理 ==========
+async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
+  const reportExtra = task.reportExtra || {};
+  const taskType = reportExtra.task_type;
+
+  if (taskType === "time_limit" && reportExtra.topic_id) {
+    const topicName = task.title.replace(/^发布一篇《/, "").replace(/》.*$/, "");
+    const postContent = generatePostContent(topicName);
+
+    tools.log(`[time_limit] 准备发帖: 话题=${topicName}`);
+
+    // 通过 data_report 上报发帖事件
+    const reportData = JSON.stringify({
+      events: [
+        {
+          type: "4",
+          path: "/bbs/post/create",
+          time: String(Math.floor(Date.now() / 1000)),
+          addition: {
+            topic_id: reportExtra.topic_id,
+            topic_name: topicName,
+            post_type: "4",
+            content_length: String(postContent.length),
+          },
+        },
+      ],
+    });
+
+    try {
+      const resp = await client.postEncryptedForm(
+        PATH_DATA_REPORT,
+        reportData,
+        { type: "104", session_id: crypto.randomUUID() },
+        { baseUrl: DATA_BASE },
+      );
+
+      if (isOkPayload(resp)) {
+        tools.log(`[time_limit] 发帖上报成功: ${topicName}`);
+        await tools.sleep(SHARE_TASK_SETTLE_MS);
+        const snapshot = await fetchSnapshotFn();
+        const after = findTaskByKey(snapshot, taskKey(task));
+        if (after && after.state === FINISH_STATE) {
+          return { ok: true, message: `${task.title} 完成`, snapshot };
+        }
+        return { ok: false, message: "发帖上报成功但任务未完成" };
+      } else {
+        return { ok: false, message: `发帖上报失败: ${resp.msg || resp.status}` };
+      }
+    } catch (error) {
+      return { ok: false, message: `发帖异常: ${error.message}` };
+    }
+  }
+
+  return { ok: false, unsupported: true, message: `未支持的 time_limit 任务: ${task.title}` };
+}
+
+// ========== 任务分发 ==========
 const TASK_HANDLERS = {
   "1": executeSharePost,
   "19": executeShareGameDetail,
   "31": executeShareGameComment,
+  "33": executeTimeLimitTask,  // 新增: 发布内容任务
 };
 
 async function executeTask(task, client, fetchSnapshotFn) {
-  if (!isDailyTask(task)) return { ok: false, unsupported: true, message: "不是脚本处理的每日任务" };
+  // 修改: 支持所有已实现的任务类型
+  if (!isSupportedTask(task)) {
+    return { ok: false, unsupported: true, message: "不是脚本处理的任务" };
+  }
+
   const handler = isSignTask(task) ? (t, c) => executeSign(c) : TASK_HANDLERS[task.taskId];
-  if (!handler) return { ok: false, unsupported: true, message: `未支持任务 task_id=${task.taskId}` };
+  if (!handler) {
+    return { ok: false, unsupported: true, message: `未支持任务 task_id=${task.taskId}` };
+  }
+
   try {
     return await handler(task, client, fetchSnapshotFn);
   } catch (error) {
@@ -282,6 +375,7 @@ async function executeTask(task, client, fetchSnapshotFn) {
   }
 }
 
+// ========== 主流程 ==========
 async function fetchSnapshot(client) {
   return extractTaskList(await client.getJson(PATH_LIST));
 }
@@ -294,8 +388,11 @@ async function runAccount(account, runtime) {
 
   const unsupported = new Set();
   const done = new Set();
-  const dailyTasks = snapshot.tasks.filter(isDailyTask);
-  for (const task of dailyTasks) {
+
+  // 修改: 支持所有已实现的任务类型
+  const allTasks = snapshot.tasks.filter(isSupportedTask);
+
+  for (const task of allTasks) {
     if (task.state === FINISH_STATE) {
       done.add(task.title || taskKey(task));
       const award = task.awardText ? ` (${task.awardText})` : "";
@@ -303,7 +400,7 @@ async function runAccount(account, runtime) {
     }
   }
 
-  for (const task of dailyTasks.filter((item) => item.state === WAITING_STATE)) {
+  for (const task of allTasks.filter((item) => item.state === WAITING_STATE)) {
     const key = taskKey(task);
     snapshot = await fetchSnapshot(client);
     const latestTask = findTaskByKey(snapshot, key);
@@ -330,7 +427,7 @@ async function runAccount(account, runtime) {
   snapshot = await fetchSnapshot(client);
   account.log(`当前总H币: ${snapshot.coin || "未知"}`);
   if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
-  const waiting = snapshot.tasks.filter((task) => isDailyTask(task) && task.state === WAITING_STATE);
+  const waiting = snapshot.tasks.filter((task) => isSupportedTask(task) && task.state === WAITING_STATE);
   return { ok: waiting.length === 0, doneCount: done.size };
 }
 
