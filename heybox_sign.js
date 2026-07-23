@@ -5,6 +5,7 @@
 */
 const { $, tools } = require("./src/core");
 const {
+  API_BASE,
   DATA_BASE,
   DATA_NAME,
   HeyboxAccount,
@@ -81,6 +82,7 @@ function extractTaskList(payload) {
         taskId: tools.toText(reportExtra.task_id),
         taskType: tools.toText(item?.type),
         reportTaskType: tools.toText(reportExtra.task_type),
+        maxjia: tools.toText(item?.maxjia),
         awardText,
       });
     }
@@ -265,14 +267,86 @@ async function executeShareGameComment(task, client, fetchSnapshotFn) {
   return settleShareTask(task, fetchSnapshotFn, `appid=${game.appid}`);
 }
 
+// ========== time_limit 任务：发布内容 ==========
+const POST_TITLE = "前面忘了中间忘了后面也忘了";
+const POST_CONTENT = "孩子很爱用，很好吃，会复购";
+
+const PATH_BBS_POST = "/bbs/app/api/link/post";
+const PATH_BBS_DELETE = "/bbs/app/link/delete";
+
+async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
+  // topic_id 在 maxjia 字段中，格式: heybox://{URL编码的JSON}
+  let topicId = null;
+  if (task.maxjia) {
+    try {
+      const jsonStr = decodeURIComponent(task.maxjia.replace(/^heybox:\/\//, ""));
+      const parsed = JSON.parse(jsonStr);
+      topicId = parsed.params?.topic_id;
+    } catch (e) {
+      // 解析失败
+    }
+  }
+
+  if (!topicId) {
+    return { ok: false, unsupported: true, message: `${task.title} 缺少 topic_id` };
+  }
+
+  const text = JSON.stringify([{ checked: false, text: POST_CONTENT, type: "text" }]);
+
+  // 使用 postJson 发送明文 form-urlencoded 数据
+  const postData = {
+    draft: "0",
+    topic_ids: String(topicId),
+    link_tag: "27",
+    text: text,
+    title: POST_TITLE,
+    desc: POST_CONTENT,
+  };
+
+  const resp = await client.postJson(
+    PATH_BBS_POST,
+    {},
+    postData,
+    { baseUrl: API_BASE },
+  );
+
+  if (resp.status === OK_STATE && resp.result && resp.result.link_id) {
+    const linkId = resp.result.link_id;
+    tools.log(`发帖成功: link_id=${linkId}`);
+
+    // 等待任务结算
+    await tools.sleep(3000);
+
+    // 删除帖子
+    tools.log(`正在删除帖子 ${linkId}...`);
+    const delResp = await client.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) }, { baseUrl: API_BASE });
+    if (delResp.status === OK_STATE) {
+      tools.log(`帖子已删除`);
+    } else {
+      tools.log(`删除失败: ${delResp.msg || "未知错误"}`);
+    }
+
+    await tools.sleep(SHARE_TASK_SETTLE_MS);
+    const snapshot = await fetchSnapshotFn();
+    const after = findTaskByKey(snapshot, taskKey(task));
+    if (after && after.state === FINISH_STATE) {
+      return { ok: true, message: `${task.title} 完成`, snapshot };
+    }
+    return { ok: false, message: `发帖成功(link_id=${linkId})但任务未完成` };
+  }
+
+  return { ok: false, message: `发帖失败: ${resp.msg || resp.status}` };
+}
+
 const TASK_HANDLERS = {
   "1": executeSharePost,
   "19": executeShareGameDetail,
   "31": executeShareGameComment,
+  "33": executeTimeLimitTask,
 };
 
 async function executeTask(task, client, fetchSnapshotFn) {
-  if (!isDailyTask(task)) return { ok: false, unsupported: true, message: "不是脚本处理的每日任务" };
+  // 支持所有已实现的任务类型（不限于 isDailyTask）
   const handler = isSignTask(task) ? (t, c) => executeSign(c) : TASK_HANDLERS[task.taskId];
   if (!handler) return { ok: false, unsupported: true, message: `未支持任务 task_id=${task.taskId}` };
   try {
@@ -294,8 +368,11 @@ async function runAccount(account, runtime) {
 
   const unsupported = new Set();
   const done = new Set();
-  const dailyTasks = snapshot.tasks.filter(isDailyTask);
-  for (const task of dailyTasks) {
+  // 支持所有已实现的任务类型（每日任务 + time_limit 任务）
+  const allTasks = snapshot.tasks.filter(
+    (task) => isDailyTask(task) || TASK_HANDLERS[task.taskId],
+  );
+  for (const task of allTasks) {
     if (task.state === FINISH_STATE) {
       done.add(task.title || taskKey(task));
       const award = task.awardText ? ` (${task.awardText})` : "";
@@ -303,7 +380,7 @@ async function runAccount(account, runtime) {
     }
   }
 
-  for (const task of dailyTasks.filter((item) => item.state === WAITING_STATE)) {
+  for (const task of allTasks.filter((item) => item.state === WAITING_STATE)) {
     const key = taskKey(task);
     snapshot = await fetchSnapshot(client);
     const latestTask = findTaskByKey(snapshot, key);
