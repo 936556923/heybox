@@ -159,7 +159,7 @@ function extractTaskList(payload) {
     const list = Array.isArray(group?.tasks) ? group.tasks : [];
     for (const item of list) {
       const reportExtra = item?.report_extra && typeof item.report_extra === "object" ? item.report_extra : {};
-      const awardText = (Array.isArray(item?.award_desc_v2) ? item.award_desc_v2 : [])
+      let awardText = (Array.isArray(item?.award_desc_v2) ? item.award_desc_v2 : [])
         .map((award) => {
           const desc = tools.toText(award.desc);
           const icon = tools.toText(award.icon);
@@ -170,6 +170,14 @@ function extractTaskList(payload) {
         })
         .filter(Boolean)
         .join(" ");
+
+      const itemTitle = tools.toText(item?.title);
+      if (!awardText) {
+        if (/签到/.test(itemTitle)) awardText = "+100经验 +100H币 +1盒电";
+        else if (/分享.*(帖子|贴子|文章)|分享任意帖子/.test(itemTitle)) awardText = "+10经验 +10H币 +1盒电";
+        else if (/分享.*(游戏详情)|前往.*(游戏详情)/.test(itemTitle)) awardText = "+10经验";
+        else if (/分享.*(游戏评价|评论)|发表.*(游戏评价)/.test(itemTitle)) awardText = "+10经验";
+      }
       tasks.push({
         groupTitle,
         title: tools.toText(item?.title),
