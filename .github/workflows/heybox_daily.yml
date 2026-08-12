@@ -1,0 +1,33 @@
+name: HeyBox 每日签到
+
+on:
+  schedule:
+    - cron: '5 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  heybox-daily:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.HEYBOX_CK != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: 每日签到
+        env:
+          heybox_ck: ${{ secrets.HEYBOX_CK }}
+        run: node heybox_sign.js
+
+      - name: 普通领券
+        env:
+          heybox_ck: ${{ secrets.HEYBOX_CK }}
+        run: node heybox_claim.js
