@@ -3,9 +3,12 @@
 账号环境变量:
   heybox_ck=pkey=xxx;x_xhh_tokenid=xxx;
 */
-const { $, tools } = require("./src/core");
+const crypto = require("crypto");
+const { $, tools, HttpClient } = require("./src/core");
 const {
   API_BASE,
+  APP_UA,
+  APP_REFERER,
   DATA_BASE,
   DATA_NAME,
   HeyboxAccount,
@@ -14,6 +17,7 @@ const {
   PATH_DATA_REPORT,
   sendShareEvents,
 } = require("./src/heybox");
+const { buildQueryString } = require("./src/heybox/signature");
 
 exports.name = "小黑盒.每日任务";
 
@@ -23,29 +27,29 @@ const FINISH_STATE = "finish";
 const PATH_LIST = "/task/list_v2/";
 const PATH_SIGN = "/task/sign_v3/sign";
 const PATH_STATE = "/task/sign_v3/get_sign_state";
-const PATH_FEEDS = "/bbs/app/feeds";
-const PATH_GAME_RECOMMEND = "/game/all_recommend/v2";
-const PATH_GAME_COMMENTS = "/bbs/app/link/game/comments";
-const PATH_VIEW_TIME = "/bbs/app/link/view/time";
 
-const POST_SHARE_VIEW_SECONDS = 5;
-const POST_SHARE_VIEW_MILLISECONDS = 5000;
 const SHARE_TASK_SETTLE_MS = 2200;
+const SHARE_VERIFY_RETRIES = 3;
+const SHARE_VERIFY_INTERVAL_MS = 1200;
 
-const FEEDS_QUERY_BASE = Object.freeze({
-  pull: "1",
-  last_pull: "1",
-  is_first: "0",
-  list_ver: "2",
-  has_cache: "1",
-  netmode: "wifi",
-});
-const GAME_RECOMMEND_QUERY_BASE = Object.freeze({ offset: "0", limit: "1" });
-const GAME_COMMENTS_QUERY_BASE = Object.freeze({
-  api_version: "4",
-  offset: "0",
-  limit: "30",
-});
+// 参考 wqe134/xiaoheihe-autosign 的任务 hkey 服务器
+const TASK_HKEY_API = "http://47.120.39.109:9900/hkey";
+
+// 通过标题正则匹配分享类任务
+const SHARE_TASK_ACTIONS = Object.freeze([
+  {
+    taskName: "shareArticle",
+    titlePattern: /分享.*(帖子|贴子|文章)|分享任意帖子/,
+  },
+  {
+    taskName: "shareGameDetail",
+    titlePattern: /分享.*(游戏详情)|前往.*(游戏详情)/,
+  },
+  {
+    taskName: "shareGameComment",
+    titlePattern: /分享.*(游戏评价|评论)|发表.*(游戏评价)/,
+  },
+]);
 
 function isOkPayload(payload) {
   return tools.toText(payload?.status) === OK_STATE;
@@ -91,76 +95,10 @@ function extractTaskList(payload) {
   return {
     nickname: tools.toText(user.username),
     coin: tools.toText(levelInfo.coin),
+    level: tools.toText(levelInfo.level),
+    battery: tools.toText(user.battery),
     tasks,
   };
-}
-
-function collectObjects(root, matcher, limit = 20) {
-  const out = [];
-  const stack = [root];
-  while (stack.length) {
-    const node = stack.pop();
-    if (!node || typeof node !== "object") continue;
-    if (matcher(node)) {
-      out.push(node);
-      if (out.length >= limit) break;
-    }
-    const values = Array.isArray(node) ? node : Object.values(node);
-    for (let index = values.length - 1; index >= 0; index -= 1) stack.push(values[index]);
-  }
-  return out;
-}
-
-function extractFeedCandidates(payload) {
-  const links = payload?.result?.links;
-  if (!Array.isArray(links)) return [];
-  const seen = new Set();
-  const out = [];
-  for (const item of links) {
-    const linkId = tools.toText(item?.link_id);
-    const hSrc = tools.toText(item?.h_src);
-    if (!/^\d+$/.test(linkId) || !hSrc) continue;
-    const key = `${linkId}|${hSrc}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ linkId, hSrc });
-  }
-  return out;
-}
-
-function extractRecommendGameCandidates(payload) {
-  const objects = collectObjects(
-    payload?.result,
-    (node) =>
-      !Array.isArray(node) &&
-      Object.prototype.hasOwnProperty.call(node, "appid") &&
-      Object.prototype.hasOwnProperty.call(node, "h_src"),
-    40,
-  );
-  const seen = new Set();
-  const out = [];
-  for (const obj of objects) {
-    const appid = tools.toText(obj.appid);
-    const hSrc = tools.toText(obj.h_src);
-    if (!/^\d+$/.test(appid) || !hSrc) continue;
-    const key = `${appid}|${hSrc}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ appid, hSrc });
-  }
-  return out;
-}
-
-function extractGameCommentCandidate(payload) {
-  const links = payload?.result?.links;
-  if (!Array.isArray(links)) return null;
-  for (const item of links) {
-    const linkId = tools.toText(item?.linkid || item?.link_id);
-    const hSrc = tools.toText(item?.h_src);
-    const userId = tools.toText(item?.userid);
-    if (/^\d+$/.test(linkId) && /^\d+$/.test(userId) && hSrc) return { linkId, hSrc, userId };
-  }
-  return null;
 }
 
 function taskKey(task) {
@@ -177,6 +115,19 @@ function isSignTask(task) {
 
 function isDailyTask(task) {
   return isSignTask(task) || task.reportTaskType === "daily";
+}
+
+function matchShareAction(task) {
+  for (const action of SHARE_TASK_ACTIONS) {
+    if (action.titlePattern.test(task.title)) {
+      return action;
+    }
+  }
+  return null;
+}
+
+function isShareTask(task) {
+  return matchShareAction(task) !== null;
 }
 
 async function settleShareTask(task, fetchSnapshotFn, detail) {
@@ -208,63 +159,92 @@ async function executeSign(client) {
   return { ok: false, message: tools.toText(finalPayload.msg) || state || "签到失败" };
 }
 
-async function executeSharePost(task, client, fetchSnapshotFn) {
-  const feedPayload = await client.getJson(PATH_FEEDS, FEEDS_QUERY_BASE);
-  if (!isOkPayload(feedPayload)) return { ok: false, message: `${task.title} 拉取帖子流失败` };
-  const posts = extractFeedCandidates(feedPayload);
-  if (!posts.length) return { ok: false, message: `${task.title} 没有可用帖子` };
-  const post = posts[0];
+// ========== 分享任务：通过 hkey 任务服务器执行 ==========
+// 参考 wqe134/xiaoheihe-autosign 的实现方式
+// 由服务端根据 taskName 自动生成加密数据提交到 data_report
 
-  await tools.sleep(1000);
-  const viewTimeResp = await client.postEncryptedForm(
-    PATH_VIEW_TIME,
-    JSON.stringify({
-      duration: [{
-        id: Number(post.linkId),
-        duration: POST_SHARE_VIEW_SECONDS,
-        duration_ms: POST_SHARE_VIEW_MILLISECONDS,
-        type: "link",
-        time: Math.floor(Date.now() / 1000),
-        h_src: post.hSrc,
-      }],
-      shows: [],
-      disappear: [],
+const taskHttpClient = new HttpClient({ timeoutMs: 5000 });
+
+async function getTaskHkey(heyboxId, taskName) {
+  const resp = await taskHttpClient.post({
+    url: TASK_HKEY_API,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      heyboxId,
+      type: 5,
+      taskName,
     }),
-    {},
-    { baseUrl: DATA_BASE },
-  );
-  if (!isOkPayload(viewTimeResp)) return { ok: false, message: `${task.title} view_time 上报失败` };
-
-  await sendShareEvents(client, "link", { link_id: post.linkId, h_src: post.hSrc });
-  return settleShareTask(task, fetchSnapshotFn, `link_id=${post.linkId}`);
-}
-
-async function executeShareGameDetail(task, client, fetchSnapshotFn) {
-  const payload = await client.getJson(PATH_GAME_RECOMMEND, GAME_RECOMMEND_QUERY_BASE);
-  if (!isOkPayload(payload)) return { ok: false, message: `${task.title} 拉取游戏列表失败` };
-  const games = extractRecommendGameCandidates(payload);
-  if (!games.length) return { ok: false, message: `${task.title} 没有可用游戏` };
-  const game = games[0];
-  await tools.sleep(1000);
-  await sendShareEvents(client, "game_detail", { app_id: game.appid, h_src: game.hSrc });
-  return settleShareTask(task, fetchSnapshotFn, `appid=${game.appid}`);
-}
-
-async function executeShareGameComment(task, client, fetchSnapshotFn) {
-  const recommendPayload = await client.getJson(PATH_GAME_RECOMMEND, GAME_RECOMMEND_QUERY_BASE);
-  if (!isOkPayload(recommendPayload)) return { ok: false, message: `${task.title} 拉取游戏列表失败` };
-  const games = extractRecommendGameCandidates(recommendPayload);
-  if (!games.length) return { ok: false, message: `${task.title} 没有可用游戏` };
-  const game = games[0];
-  const commentsPayload = await client.getJson(PATH_GAME_COMMENTS, {
-    ...GAME_COMMENTS_QUERY_BASE,
-    appid: game.appid,
   });
-  if (!isOkPayload(commentsPayload)) return { ok: false, message: `${task.title} 拉取游戏评论失败` };
-  const comment = extractGameCommentCandidate(commentsPayload);
-  if (!comment) return { ok: false, message: `${task.title} 评论列表缺少关键字段` };
-  await sendShareEvents(client, "game_comment", { link_id: comment.linkId });
-  return settleShareTask(task, fetchSnapshotFn, `appid=${game.appid}`);
+  return resp.result;
+}
+
+async function executeShareByServer(task, client, fetchSnapshotFn) {
+  const action = matchShareAction(task);
+  if (!action) {
+    return { ok: false, unsupported: true, message: `${task.title} 未匹配到分享任务模式` };
+  }
+
+  // 方式1：优先尝试原生加密上报 (sendShareEvents)
+  try {
+    const shareSourceMap = {
+      shareArticle: "link",
+      shareGameDetail: "game_detail",
+      shareGameComment: "game_comment",
+    };
+    const source = shareSourceMap[action.taskName] || "link";
+    await sendShareEvents(client, source, {});
+  } catch (err) {
+    // 忽略异常，继续备用方式
+  }
+
+  // 方式2：备用远程 task hkey 上报
+  try {
+    const hkeyInfo = await getTaskHkey(client.account.heyboxId, action.taskName);
+    if (hkeyInfo && hkeyInfo.hkey) {
+      const version = hkeyInfo.version || "1.3.347";
+      const build = hkeyInfo.build || "916";
+      const queryParams = client.buildSignedQuery(PATH_DATA_REPORT, {
+        hkey: hkeyInfo.hkey,
+        version: version,
+        build: build,
+        time: hkeyInfo.timestamp,
+      }, {
+        type: "104",
+        time_: hkeyInfo.timestamp,
+        session_id: crypto.randomUUID(),
+      });
+      const query = buildQueryString(queryParams);
+      const body = buildQueryString({
+        data: hkeyInfo.data,
+        key: hkeyInfo.key,
+        sid: hkeyInfo.sid,
+      });
+
+      await client.post({
+        url: `${DATA_BASE}${PATH_DATA_REPORT}?${query}`,
+        headers: {
+          "User-Agent": APP_UA,
+          Referer: APP_REFERER,
+          Cookie: client.account.appCookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body,
+      });
+    }
+  } catch (err) {
+    // 忽略备用方式异常
+  }
+
+  // 多次重试验证任务状态
+  for (let retry = 0; retry < SHARE_VERIFY_RETRIES; retry += 1) {
+    await tools.sleep(SHARE_VERIFY_INTERVAL_MS);
+    const snapshot = await fetchSnapshotFn();
+    const after = findTaskByKey(snapshot, taskKey(task));
+    if (after && after.state === FINISH_STATE) {
+      return { ok: true, message: `${task.title} 完成 (${action.taskName})`, snapshot };
+    }
+  }
+  return { ok: false, message: `${task.title} 未确认完成 (${action.taskName})` };
 }
 
 // ========== time_limit 任务：发布内容 ==========
@@ -339,16 +319,44 @@ async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
 }
 
 const TASK_HANDLERS = {
-  "1": executeSharePost,
-  "19": executeShareGameDetail,
-  "31": executeShareGameComment,
   "33": executeTimeLimitTask,
 };
 
+function isPostContentTask(task) {
+  return task.taskId === "33" || /发布.*(内容|帖子)|发帖/.test(task.title);
+}
+
 async function executeTask(task, client, fetchSnapshotFn) {
-  // 支持所有已实现的任务类型（不限于 isDailyTask）
-  const handler = isSignTask(task) ? (t, c) => executeSign(c) : TASK_HANDLERS[task.taskId];
-  if (!handler) return { ok: false, unsupported: true, message: `未支持任务 task_id=${task.taskId}` };
+  // 签到任务
+  if (isSignTask(task)) {
+    try {
+      return await executeSign(client);
+    } catch (error) {
+      return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
+    }
+  }
+
+  // 分享类任务：通过标题正则匹配，使用 hkey 任务服务器执行
+  if (isShareTask(task)) {
+    try {
+      return await executeShareByServer(task, client, fetchSnapshotFn);
+    } catch (error) {
+      return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
+    }
+  }
+
+  // 社区发帖任务：自动进行【发帖 -> 自动删帖 -> 结算】
+  if (isPostContentTask(task)) {
+    try {
+      return await executeTimeLimitTask(task, client, fetchSnapshotFn);
+    } catch (error) {
+      return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
+    }
+  }
+
+  // 其他任务：通过 task_id 匹配处理器
+  const handler = TASK_HANDLERS[task.taskId];
+  if (!handler) return { ok: false, unsupported: true, message: `未支持任务 task_id=${task.taskId} ${task.title}` };
   try {
     return await handler(task, client, fetchSnapshotFn);
   } catch (error) {
@@ -357,20 +365,29 @@ async function executeTask(task, client, fetchSnapshotFn) {
 }
 
 async function fetchSnapshot(client) {
-  return extractTaskList(await client.getJson(PATH_LIST));
+  const raw = await client.getJson(PATH_LIST);
+  const snapshot = extractTaskList(raw);
+  snapshot.status = tools.toText(raw?.status);
+  snapshot.msg = tools.toText(raw?.msg);
+  return snapshot;
 }
 
 async function runAccount(account, runtime) {
   account.log("开始每日任务");
   const client = new HeyboxAppClient(account, { runtime });
   let snapshot = await fetchSnapshot(client);
+  if (snapshot.status === "relogin" || snapshot.msg === "请重新登录") {
+    account.log("账号凭证已失效或过期，请重新登录小黑盒并抓取最新 Cookie (pkey 和 x_xhh_tokenid)");
+    return { ok: false, doneCount: 0 };
+  }
+
   account.log(`账号=${snapshot.nickname || account.heyboxId} 黑盒ID=${account.heyboxId} IMEI=${account.imei}`);
 
   const unsupported = new Set();
   const done = new Set();
   // 支持所有已实现的任务类型（每日任务 + time_limit 任务）
   const allTasks = snapshot.tasks.filter(
-    (task) => isDailyTask(task) || TASK_HANDLERS[task.taskId],
+    (task) => isDailyTask(task) || isShareTask(task) || isPostContentTask(task) || TASK_HANDLERS[task.taskId],
   );
   for (const task of allTasks) {
     if (task.state === FINISH_STATE) {
@@ -405,7 +422,10 @@ async function runAccount(account, runtime) {
   }
 
   snapshot = await fetchSnapshot(client);
-  account.log(`当前总H币: ${snapshot.coin || "未知"}`);
+  const coinValue = Number.isFinite(Number(snapshot.coin)) ? Number(snapshot.coin) / 1000 : "未知";
+  account.log(`当前盒币: ${snapshot.coin || "未知"} ≈ ${coinValue}￥`);
+  account.log(`当前等级: ${snapshot.level || "未知"}`);
+  account.log(`当前盒电: ${snapshot.battery || "未知"}`);
   if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
   const waiting = snapshot.tasks.filter((task) => isDailyTask(task) && task.state === WAITING_STATE);
   return { ok: waiting.length === 0, doneCount: done.size };
