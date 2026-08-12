@@ -652,6 +652,10 @@ async function run() {
   process.exitCode = okCount === $.userList.length ? 0 : 1;
 }
 
-exports.run = run;
+module.exports = {
+  name: exports.name,
+  run,
+  runAccount,
+};
 
 if (require.main === module) $.start(exports);

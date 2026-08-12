@@ -30,7 +30,7 @@ jobs:
             heybox-data-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
             heybox-data-cache-${{ runner.os }}-
 
-      - name: 每日签到
+      - name: 每日任务全量自动执行与微信推送
         env:
           heybox_ck: ${{ secrets.HEYBOX_CK }}
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
@@ -38,14 +38,4 @@ jobs:
           BARK_URL: ${{ secrets.BARK_URL }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: node heybox_sign.js
-
-      - name: 普通领券
-        env:
-          heybox_ck: ${{ secrets.HEYBOX_CK }}
-        run: node heybox_claim.js
-
-      - name: 抽奖盒券
-        env:
-          heybox_ck: ${{ secrets.HEYBOX_CK }}
-        run: node heybox_roll.js
+        run: node heybox_all.js

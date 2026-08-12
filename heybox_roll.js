@@ -495,6 +495,7 @@ async function runAccount(account, awards) {
   }
 
   account.log(`抽奖活动处理完成: 跑=${runCount}, 跳过=${skipCount}, 当前完成=${doneCount}/${awards.length}`);
+  return { runCount, skipCount, doneCount, total: awards.length };
 }
 
 async function run() {
@@ -519,6 +520,11 @@ async function run() {
   }
 }
 
-exports.run = run;
+module.exports = {
+  name: exports.name,
+  run,
+  runAccount,
+  discoverAwardIds,
+};
 
 if (require.main === module) $.start(exports);

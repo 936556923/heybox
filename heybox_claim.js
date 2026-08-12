@@ -163,9 +163,10 @@ async function runAccount(account) {
   const targets = await loadTargets(client, claimedSet);
   if (!targets.length) {
     account.log(`没有需要领取的优惠券 (已自动跳过 ${claimedSet.size} 张已领取的优惠券)`);
-    return;
+    return { claimedCount: 0, skippedCount: claimedSet.size };
   }
 
+  let claimedCount = 0;
   account.log(`待领券目标数: ${targets.length}`);
   for (const target of targets) {
     const result = await claimWithFreshSession(client, target);
@@ -173,8 +174,8 @@ async function runAccount(account) {
     const title = target.name ? ` ${target.name}` : "";
     account.log(`item_id=${target.itemId}${title}: ${ok ? "OK" : "FAIL"} ${result.message}`);
     
-    // 如果提示成功、已存在、已领取，加进缓存列表
     if (ok || /已领取|已拥有|成功|success/i.test(result.message)) {
+      if (ok) claimedCount += 1;
       claimedSet.add(target.itemId);
       saveClaimedCache(account.heyboxId, claimedSet);
     }
@@ -185,6 +186,7 @@ async function runAccount(account) {
     }
     if (CONFIG.delayMs > 0) await tools.sleep(CONFIG.delayMs);
   }
+  return { claimedCount, skippedCount: claimedSet.size - claimedCount };
 }
 
 async function run() {
@@ -199,6 +201,10 @@ async function run() {
   }
 }
 
-exports.run = run;
+module.exports = {
+  name: exports.name,
+  run,
+  runAccount,
+};
 
 if (require.main === module) $.start(exports);
