@@ -3,7 +3,7 @@
 账号环境变量:
   heybox_ck=pkey=xxx;x_xhh_tokenid=xxx;
 */
-const { $, tools } = require("./src/core");
+const { $, tools, Cache } = require("./src/core");
 const {
   DATA_NAME,
   HeyboxAccount,
@@ -36,17 +36,32 @@ function resultMessage(payload) {
 }
 
 function isClaimableCoupon(item) {
+  const isGet = item?.is_get === true || item?.is_get === 1 || item?.is_get === "1";
   return (
     item &&
     item.id !== undefined &&
     item.id !== null &&
-    item.is_get !== true &&
+    !isGet &&
     item.is_limit !== true &&
     String(item.state) === "0"
   );
 }
 
-async function loadTargets(client) {
+function getClaimedCache(heyboxId) {
+  try {
+    const raw = Cache.read("heybox_claim", `claimed_${heyboxId}`);
+    if (raw) return new Set(JSON.parse(raw));
+  } catch (e) {}
+  return new Set();
+}
+
+function saveClaimedCache(heyboxId, claimedSet) {
+  try {
+    Cache.write("heybox_claim", `claimed_${heyboxId}`, JSON.stringify(Array.from(claimedSet)));
+  } catch (e) {}
+}
+
+async function loadTargets(client, claimedSet) {
   const targets = [];
   const seen = new Set();
   let lastval = "";
@@ -60,7 +75,7 @@ async function loadTargets(client) {
         app_version: CONFIG.appVersion,
         limit: String(CONFIG.pageLimit),
         lastval,
-        need_is_get: "0",
+        need_is_get: "1",
       },
       retries: 1,
     });
@@ -68,8 +83,14 @@ async function loadTargets(client) {
     const session = tools.toText(result.session);
     const games = Array.isArray(result.games) ? result.games : [];
     for (const item of games) {
-      if (!isClaimableCoupon(item)) continue;
       const itemId = String(item.id);
+      if (claimedSet.has(itemId)) continue;
+      if (!isClaimableCoupon(item)) {
+        if (item?.is_get === true || item?.is_get === 1 || item?.is_get === "1") {
+          claimedSet.add(itemId);
+        }
+        continue;
+      }
       if (seen.has(itemId)) continue;
       seen.add(itemId);
       targets.push({
@@ -83,7 +104,7 @@ async function loadTargets(client) {
     if (!nextLastval || nextLastval === lastval || games.length === 0) break;
     lastval = nextLastval;
   }
-
+  saveClaimedCache(client.account.heyboxId, claimedSet);
   return targets;
 }
 
@@ -103,7 +124,7 @@ async function refreshClaimSession(client) {
       app_version: CONFIG.appVersion,
       limit: "20",
       lastval: "0",
-      need_is_get: "0",
+      need_is_get: "1",
     },
     retries: 1,
   });
@@ -138,18 +159,26 @@ async function claimWithFreshSession(client, target) {
 async function runAccount(account) {
   const client = new HeyboxWebClient(account);
   account.log(`开始领券 heybox_id=${account.heyboxId}`);
-  const targets = await loadTargets(client);
+  const claimedSet = getClaimedCache(account.heyboxId);
+  const targets = await loadTargets(client, claimedSet);
   if (!targets.length) {
-    account.log("No claimable coupon found");
+    account.log(`没有需要领取的优惠券 (已自动跳过 ${claimedSet.size} 张已领取的优惠券)`);
     return;
   }
 
-  account.log(`Claim targets: ${targets.map((target) => target.itemId).join(", ")}`);
+  account.log(`待领券目标数: ${targets.length}`);
   for (const target of targets) {
     const result = await claimWithFreshSession(client, target);
     const ok = result.payload?.status === "ok" && result.payload?.result?.success === 1;
     const title = target.name ? ` ${target.name}` : "";
     account.log(`item_id=${target.itemId}${title}: ${ok ? "OK" : "FAIL"} ${result.message}`);
+    
+    // 如果提示成功、已存在、已领取，加进缓存列表
+    if (ok || /已领取|已拥有|成功|success/i.test(result.message)) {
+      claimedSet.add(target.itemId);
+      saveClaimedCache(account.heyboxId, claimedSet);
+    }
+    
     if (!ok && isLoginRequired(result.message)) {
       account.log("Stop: heybox_ck login state is invalid or expired");
       break;

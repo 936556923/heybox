@@ -35,6 +35,30 @@ const SHARE_VERIFY_INTERVAL_MS = 1200;
 // 参考 wqe134/xiaoheihe-autosign 的任务 hkey 服务器
 const TASK_HKEY_API = "http://47.120.39.109:9900/hkey";
 
+const PATH_FEEDS = "/bbs/app/feeds";
+const PATH_GAME_RECOMMEND = "/game/all_recommend/v2";
+const PATH_GAME_COMMENTS = "/bbs/app/link/game/comments";
+const PATH_VIEW_TIME = "/bbs/app/link/view/time";
+const PATH_SHARED = "/task/shared/";
+
+const POST_SHARE_VIEW_SECONDS = 5;
+const POST_SHARE_VIEW_MILLISECONDS = 5000;
+
+const FEEDS_QUERY_BASE = Object.freeze({
+  pull: "1",
+  last_pull: "1",
+  is_first: "0",
+  list_ver: "2",
+  has_cache: "1",
+  netmode: "wifi",
+});
+const GAME_RECOMMEND_QUERY_BASE = Object.freeze({ offset: "0", limit: "1" });
+const GAME_COMMENTS_QUERY_BASE = Object.freeze({
+  api_version: "4",
+  offset: "0",
+  limit: "30",
+});
+
 // 通过标题正则匹配分享类任务
 const SHARE_TASK_ACTIONS = Object.freeze([
   {
@@ -50,6 +74,74 @@ const SHARE_TASK_ACTIONS = Object.freeze([
     titlePattern: /分享.*(游戏评价|评论)|发表.*(游戏评价)/,
   },
 ]);
+
+function collectObjects(root, matcher, limit = 20) {
+  const out = [];
+  const stack = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node !== "object") continue;
+    if (matcher(node)) {
+      out.push(node);
+      if (out.length >= limit) break;
+    }
+    const values = Array.isArray(node) ? node : Object.values(node);
+    for (let index = values.length - 1; index >= 0; index -= 1) stack.push(values[index]);
+  }
+  return out;
+}
+
+function extractFeedCandidates(payload) {
+  const links = payload?.result?.links;
+  if (!Array.isArray(links)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of links) {
+    const linkId = tools.toText(item?.link_id);
+    const hSrc = tools.toText(item?.h_src);
+    if (!/^\d+$/.test(linkId) || !hSrc) continue;
+    const key = `${linkId}|${hSrc}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ linkId, hSrc });
+  }
+  return out;
+}
+
+function extractRecommendGameCandidates(payload) {
+  const objects = collectObjects(
+    payload?.result,
+    (node) =>
+      !Array.isArray(node) &&
+      Object.prototype.hasOwnProperty.call(node, "appid") &&
+      Object.prototype.hasOwnProperty.call(node, "h_src"),
+    40,
+  );
+  const seen = new Set();
+  const out = [];
+  for (const obj of objects) {
+    const appid = tools.toText(obj.appid);
+    const hSrc = tools.toText(obj.h_src);
+    if (!/^\d+$/.test(appid) || !hSrc) continue;
+    const key = `${appid}|${hSrc}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ appid, hSrc });
+  }
+  return out;
+}
+
+function extractGameCommentCandidate(payload) {
+  const links = payload?.result?.links;
+  if (!Array.isArray(links)) return null;
+  for (const item of links) {
+    const linkId = tools.toText(item?.linkid || item?.link_id);
+    const hSrc = tools.toText(item?.h_src);
+    const userId = tools.toText(item?.userid);
+    if (/^\d+$/.test(linkId) && /^\d+$/.test(userId) && hSrc) return { linkId, hSrc, userId };
+  }
+  return null;
+}
 
 function isOkPayload(payload) {
   return tools.toText(payload?.status) === OK_STATE;
@@ -178,26 +270,96 @@ async function getTaskHkey(heyboxId, taskName) {
   return resp.result;
 }
 
+async function prepareShareTarget(actionName, client) {
+  if (actionName === "shareArticle") {
+    try {
+      const feedPayload = await client.getJson(PATH_FEEDS, FEEDS_QUERY_BASE);
+      const posts = extractFeedCandidates(feedPayload);
+      if (posts.length) {
+        const post = posts[0];
+        try {
+          await client.postEncryptedForm(
+            PATH_VIEW_TIME,
+            JSON.stringify({
+              duration: [{
+                id: Number(post.linkId),
+                duration: POST_SHARE_VIEW_SECONDS,
+                duration_ms: POST_SHARE_VIEW_MILLISECONDS,
+                type: "link",
+                time: Math.floor(Date.now() / 1000),
+                h_src: post.hSrc,
+              }],
+              shows: [],
+              disappear: [],
+            }),
+            {},
+            { baseUrl: DATA_BASE },
+          );
+        } catch (e) {}
+        try {
+          await client.getJson(PATH_SHARED, {
+            act_id: `_link_${post.linkId}`,
+            shared_type: "app",
+            share_plat: "WechatSession",
+            web_url: `https://api.xiaoheihe.cn/bbs/app/link/web/view?link_id=${post.linkId}`,
+          });
+        } catch (e) {}
+        return { source: "link", extra: { link_id: post.linkId, h_src: post.hSrc } };
+      }
+    } catch (e) {}
+  } else if (actionName === "shareGameDetail") {
+    try {
+      const payload = await client.getJson(PATH_GAME_RECOMMEND, GAME_RECOMMEND_QUERY_BASE);
+      const games = extractRecommendGameCandidates(payload);
+      if (games.length) {
+        const game = games[0];
+        try {
+          await client.getJson(PATH_SHARED, {
+            act_id: `_game_detail_${game.appid}`,
+            shared_type: "app",
+            share_plat: "WechatSession",
+          });
+        } catch (e) {}
+        return { source: "game_detail", extra: { app_id: game.appid, h_src: game.hSrc } };
+      }
+    } catch (e) {}
+  } else if (actionName === "shareGameComment") {
+    try {
+      const recommendPayload = await client.getJson(PATH_GAME_RECOMMEND, GAME_RECOMMEND_QUERY_BASE);
+      const games = extractRecommendGameCandidates(recommendPayload);
+      if (games.length) {
+        const game = games[0];
+        const commentsPayload = await client.getJson(PATH_GAME_COMMENTS, {
+          ...GAME_COMMENTS_QUERY_BASE,
+          appid: game.appid,
+        });
+        const comment = extractGameCommentCandidate(commentsPayload);
+        if (comment) {
+          return { source: "game_comment", extra: { link_id: comment.linkId } };
+        }
+      }
+    } catch (e) {}
+  }
+  return { source: "link", extra: {} };
+}
+
 async function executeShareByServer(task, client, fetchSnapshotFn) {
   const action = matchShareAction(task);
   if (!action) {
     return { ok: false, unsupported: true, message: `${task.title} 未匹配到分享任务模式` };
   }
 
-  // 方式1：优先尝试原生加密上报 (sendShareEvents)
+  // 0. 获取真实点击实体的参数 (link_id / app_id / h_src)
+  const prepared = await prepareShareTarget(action.taskName, client);
+
+  // 1. 优先尝试原生带实体参数加密上报 (sendShareEvents)
   try {
-    const shareSourceMap = {
-      shareArticle: "link",
-      shareGameDetail: "game_detail",
-      shareGameComment: "game_comment",
-    };
-    const source = shareSourceMap[action.taskName] || "link";
-    await sendShareEvents(client, source, {});
+    await sendShareEvents(client, prepared.source, prepared.extra);
   } catch (err) {
     // 忽略异常，继续备用方式
   }
 
-  // 方式2：备用远程 task hkey 上报
+  // 2. 备用远程 task hkey 上报
   try {
     const hkeyInfo = await getTaskHkey(client.account.heyboxId, action.taskName);
     if (hkeyInfo && hkeyInfo.hkey) {
@@ -397,27 +559,32 @@ async function runAccount(account, runtime) {
     }
   }
 
-  for (const task of allTasks.filter((item) => item.state === WAITING_STATE)) {
-    const key = taskKey(task);
-    snapshot = await fetchSnapshot(client);
-    const latestTask = findTaskByKey(snapshot, key);
-    if (!latestTask || latestTask.state !== WAITING_STATE) continue;
+  const waitingTasks = allTasks.filter((item) => item.state === WAITING_STATE);
+  if (waitingTasks.length === 0) {
+    account.log("今日所有任务均已完成，快速跳过重复上报");
+  } else {
+    for (const task of waitingTasks) {
+      const key = taskKey(task);
+      snapshot = await fetchSnapshot(client);
+      const latestTask = findTaskByKey(snapshot, key);
+      if (!latestTask || latestTask.state !== WAITING_STATE) continue;
 
-    const result = await executeTask(latestTask, client, () => fetchSnapshot(client));
-    if (result.unsupported) {
-      unsupported.add(latestTask.title || key);
-      continue;
-    }
+      const result = await executeTask(latestTask, client, () => fetchSnapshot(client));
+      if (result.unsupported) {
+        unsupported.add(latestTask.title || key);
+        continue;
+      }
 
-    snapshot = result.snapshot || await fetchSnapshot(client);
-    const after = findTaskByKey(snapshot, key);
-    if (after && after.state === FINISH_STATE) {
-      done.add(after.title || key);
-      const award = latestTask.awardText ? ` 奖励: ${latestTask.awardText}` : "";
-      const extra = result.message ? ` (${result.message})` : "";
-      account.log(`${after.title}: 已完成${award}${extra}`);
-    } else {
-      account.log(`${latestTask.title}: 未完成，${result.message}`);
+      snapshot = result.snapshot || await fetchSnapshot(client);
+      const after = findTaskByKey(snapshot, key);
+      if (after && after.state === FINISH_STATE) {
+        done.add(after.title || key);
+        const award = latestTask.awardText ? ` 奖励: ${latestTask.awardText}` : "";
+        const extra = result.message ? ` (${result.message})` : "";
+        account.log(`${after.title}: 已完成${award}${extra}`);
+      } else {
+        account.log(`${latestTask.title}: 未完成，${result.message}`);
+      }
     }
   }
 

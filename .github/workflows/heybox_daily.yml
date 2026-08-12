@@ -21,6 +21,15 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Cache HeyBox Data
+        uses: actions/cache@v4
+        with:
+          path: cache
+          key: heybox-data-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            heybox-data-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+            heybox-data-cache-${{ runner.os }}-
+
       - name: 每日签到
         env:
           heybox_ck: ${{ secrets.HEYBOX_CK }}

@@ -397,18 +397,33 @@ async function runPreJoinTasks(account, webClient, appClient, awardId, home) {
   return current;
 }
 
+function getRollCache(heyboxId) {
+  try {
+    const raw = Cache.read("heybox_roll", `done_${heyboxId}`);
+    if (raw) return new Set(JSON.parse(raw));
+  } catch (e) {}
+  return new Set();
+}
+
+function saveRollCache(heyboxId, doneSet) {
+  try {
+    Cache.write("heybox_roll", `done_${heyboxId}`, JSON.stringify(Array.from(doneSet)));
+  } catch (e) {}
+}
+
 async function runAward(account, webClient, appClient, award) {
   const awardId = award.awardId;
-  account.log(`抽奖活动 award_id=${awardId} ${award.awardName || ""}`.trim());
+  const doneSet = getRollCache(account.heyboxId);
+
   let home = await fetchHome(webClient, awardId);
-  if (isActivityDone(home)) {
-    account.log("活动已完成，跳过");
-    if (CONFIG.printTickets) {
-      const tickets = await fetchTicketList(webClient, account, awardId);
-      printTicketList(account, tickets);
-    }
-    return { skipped: true };
+
+  // 快速判断：如果之前已处理完成，且接口确认已参与 (joined === true)
+  if (doneSet.has(awardId) && home?.result?.joined) {
+    account.log(`抽奖活动 award_id=${awardId} ${award.awardName}: 已参与过且任务已完成，快速跳过`);
+    return { skipped: true, done: true, unsupportedCount: 0 };
   }
+
+  account.log(`抽奖活动 award_id=${awardId} ${award.awardName || ""}`.trim());
 
   home = await runPreJoinTasks(account, webClient, appClient, awardId, home);
 
@@ -445,11 +460,18 @@ async function runAward(account, webClient, appClient, award) {
   if (unsupported.length) {
     account.log(`未自动处理任务: ${unsupported.map((task) => task.task_key || task.task_id).join(", ")}`);
   }
-  if (CONFIG.printTickets) {
+  if (CONFIG.printTickets && home?.result?.joined) {
     const tickets = await fetchTicketList(webClient, account, awardId);
     printTicketList(account, tickets);
   }
-  return { skipped: false, done: isActivityDone(home), unsupportedCount: unsupported.length };
+
+  const done = isActivityDone(home);
+  if (done) {
+    doneSet.add(awardId);
+    saveRollCache(account.heyboxId, doneSet);
+  }
+
+  return { skipped: false, done, unsupportedCount: unsupported.length };
 }
 
 async function runAccount(account, awards) {
