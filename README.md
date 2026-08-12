@@ -131,6 +131,17 @@ pkey=xxx;x_xhh_tokenid=xxx;
   pkey=账号2;x_xhh_tokenid=账号2;
   ```
 
+### 📱 消息推送配置（可选，推荐配置）
+
+脚本运行完成后支持将资产统计与结果自动发送到您的手机通知栏：
+
+| 推送服务 | 环境变量名 | 说明 |
+| --- | --- | --- |
+| **Server酱 (微信)** | `PUSH_KEY` | 在 [Server酱官网](https://sct.ftqq.com) 拿到的 SendKey |
+| **PushPlus (微信)** | `PUSHPLUS_TOKEN` | 在 [PushPlus官网](https://www.pushplus.plus) 拿到的 Token |
+| **Bark (iOS推送)** | `BARK_URL` | Bark App 提供的完整请求 URL |
+| **Telegram Bot** | `TG_BOT_TOKEN` & `TG_CHAT_ID` | Telegram 机器人的 Token 和 Chat ID |
+
 ---
 
 ## iPhone (iOS) Stream 抓包获取 App Cookie 教程

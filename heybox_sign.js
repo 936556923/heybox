@@ -4,7 +4,7 @@
   heybox_ck=pkey=xxx;x_xhh_tokenid=xxx;
 */
 const crypto = require("crypto");
-const { $, tools, HttpClient } = require("./src/core");
+const { $, tools, HttpClient, Cache, notify } = require("./src/core");
 const {
   API_BASE,
   APP_UA,
@@ -595,11 +595,21 @@ async function runAccount(account, runtime) {
   account.log(`当前盒电: ${snapshot.battery || "未知"}`);
   if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
   const waiting = snapshot.tasks.filter((task) => isDailyTask(task) && task.state === WAITING_STATE);
-  return { ok: waiting.length === 0, doneCount: done.size };
+  return {
+    ok: waiting.length === 0,
+    doneCount: done.size,
+    nickname: snapshot.nickname || account.heyboxId,
+    coin: snapshot.coin,
+    coinValue,
+    level: snapshot.level,
+    battery: snapshot.battery,
+  };
 }
 
 async function run() {
   if (!await $.read_env(HeyboxAccount, DATA_NAME)) return;
+
+  Cache.cleanExpired("heybox_sign");
 
   const runtime = { version: "", build: "" };
   const bootClient = new HeyboxAppClient($.userList[0], { runtime });
@@ -609,16 +619,26 @@ async function run() {
   $.log(`当前版本: ${runtime.version} build=${runtime.build}`);
 
   let okCount = 0;
+  const summaryList = [];
+
   for (const account of $.userList) {
     try {
       const result = await runAccount(account, runtime);
       if (result.ok) okCount += 1;
+      summaryList.push(`👤 账号【${result.nickname}】\n- 盒币: ${result.coin || "-"} (≈${result.coinValue}￥)\n- 等级: Lv.${result.level || "-"}\n- 盒电: ${result.battery || "-"}\n- 完成状态: ${result.ok ? "✅ 每日任务全部完成" : "⚠️ 部分任务未完成"}`);
     } catch (error) {
       account.log(`任务执行失败: ${error.message}`);
+      summaryList.push(`👤 账号【${account.heyboxId}】\n- 状态: ❌ 任务执行异常 (${error.message})`);
     }
   }
 
   $.log(`\n完成: ${okCount}/${$.userList.length}`);
+
+  // 发送消息推送
+  const title = `小黑盒每日任务通知 (${okCount}/${$.userList.length})`;
+  const content = summaryList.join("\n\n");
+  await notify.sendNotify(title, content);
+
   process.exitCode = okCount === $.userList.length ? 0 : 1;
 }
 

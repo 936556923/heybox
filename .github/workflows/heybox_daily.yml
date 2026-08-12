@@ -33,6 +33,11 @@ jobs:
       - name: 每日签到
         env:
           heybox_ck: ${{ secrets.HEYBOX_CK }}
+          PUSH_KEY: ${{ secrets.PUSH_KEY }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: node heybox_sign.js
 
       - name: 普通领券
