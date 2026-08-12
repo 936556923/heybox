@@ -188,6 +188,8 @@ function extractTaskList(payload) {
     nickname: tools.toText(user.username),
     coin: tools.toText(levelInfo.coin),
     level: tools.toText(levelInfo.level),
+    currentExp: tools.toText(levelInfo.current_exp || levelInfo.exp),
+    nextLevelExp: tools.toText(levelInfo.next_level_exp),
     battery: tools.toText(user.battery),
     tasks,
   };
@@ -590,8 +592,11 @@ async function runAccount(account, runtime) {
 
   snapshot = await fetchSnapshot(client);
   const coinValue = Number.isFinite(Number(snapshot.coin)) ? Number(snapshot.coin) / 1000 : "未知";
+  const expStr = snapshot.currentExp && snapshot.nextLevelExp
+    ? ` (${snapshot.currentExp}/${snapshot.nextLevelExp} EXP, 距升级差 ${Number(snapshot.nextLevelExp) - Number(snapshot.currentExp)})`
+    : "";
   account.log(`当前盒币: ${snapshot.coin || "未知"} ≈ ${coinValue}￥`);
-  account.log(`当前等级: ${snapshot.level || "未知"}`);
+  account.log(`当前等级: Lv.${snapshot.level || "未知"}${expStr}`);
   account.log(`当前盒电: ${snapshot.battery || "未知"}`);
   if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
   const waiting = snapshot.tasks.filter((task) => isDailyTask(task) && task.state === WAITING_STATE);
@@ -602,6 +607,8 @@ async function runAccount(account, runtime) {
     coin: snapshot.coin,
     coinValue,
     level: snapshot.level,
+    currentExp: snapshot.currentExp,
+    nextLevelExp: snapshot.nextLevelExp,
     battery: snapshot.battery,
   };
 }
@@ -625,7 +632,10 @@ async function run() {
     try {
       const result = await runAccount(account, runtime);
       if (result.ok) okCount += 1;
-      summaryList.push(`👤 账号【${result.nickname}】\n- 盒币: ${result.coin || "-"} (≈${result.coinValue}￥)\n- 等级: Lv.${result.level || "-"}\n- 盒电: ${result.battery || "-"}\n- 完成状态: ${result.ok ? "✅ 每日任务全部完成" : "⚠️ 部分任务未完成"}`);
+      const expText = result.currentExp && result.nextLevelExp
+        ? ` (${result.currentExp}/${result.nextLevelExp})`
+        : "";
+      summaryList.push(`👤 账号【${result.nickname}】\n- 盒币: ${result.coin || "-"} (≈${result.coinValue}￥)\n- 等级: Lv.${result.level || "-"}${expText}\n- 盒电: ${result.battery || "-"}\n- 完成状态: ${result.ok ? "✅ 每日任务全部完成" : "⚠️ 部分任务未完成"}`);
     } catch (error) {
       account.log(`任务执行失败: ${error.message}`);
       summaryList.push(`👤 账号【${account.heyboxId}】\n- 状态: ❌ 任务执行异常 (${error.message})`);
