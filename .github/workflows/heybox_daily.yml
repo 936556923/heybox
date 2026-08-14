@@ -2,8 +2,7 @@ name: HeyBox 每日签到
 
 on:
   schedule:
-    - cron: '5 16 * * *'  # 北京时间 00:05
-    - cron: '0 0 * * *'   # 北京时间 08:00
+    - cron: '5 16 * * *'  # 北京时间凌晨 00:05
   workflow_dispatch:
 
 jobs:

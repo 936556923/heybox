@@ -569,11 +569,20 @@ async function runAccount(account, runtime) {
     }
   }
 
+  const TASK_INTERVAL_MIN_MS = 2000;
+  const TASK_INTERVAL_MAX_MS = 4000;
+
   const waitingTasks = allTasks.filter((item) => item.state === WAITING_STATE);
   if (waitingTasks.length === 0) {
     account.log("今日所有任务均已完成，快速跳过重复上报");
   } else {
-    for (const task of waitingTasks) {
+    for (let index = 0; index < waitingTasks.length; index += 1) {
+      const task = waitingTasks[index];
+      if (index > 0) {
+        const intervalMs = tools.randomInt(TASK_INTERVAL_MIN_MS, TASK_INTERVAL_MAX_MS);
+        account.log(`[间隔保护] 等待 ${(intervalMs / 1000).toFixed(1)} 秒后继续下一个任务...`);
+        await tools.sleep(intervalMs);
+      }
       const key = taskKey(task);
       snapshot = await fetchSnapshot(client);
       const latestTask = findTaskByKey(snapshot, key);

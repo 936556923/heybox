@@ -60,6 +60,8 @@ async function run() {
       account.log(`签到任务失败: ${e.message}`);
     }
 
+    await tools.sleep(1500);
+
     // 2. 执行普通领券
     let claimRes = { claimedCount: 0, skippedCount: 0 };
     try {
@@ -67,6 +69,8 @@ async function run() {
     } catch (e) {
       account.log(`领券任务失败: ${e.message}`);
     }
+
+    await tools.sleep(1500);
 
     // 3. 执行0元抽奖盒券
     let rollRes = { runCount: 0, skipCount: 0, doneCount: 0, total: 0 };
