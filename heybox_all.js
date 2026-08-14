@@ -128,6 +128,24 @@ async function run() {
       taskLines.push(`📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
     }
 
+    // 如果账号凭证过期失效
+    if (signRes?.isExpired) {
+      const expiredReport = [
+        `🚨 **账号凭证失效警示**`,
+        `👤 **账号 ID**：${account.heyboxId}`,
+        `📅 **检测时间**：${nowTime}`,
+        `---------------------------------------`,
+        `⚠️ **问题原因**：小黑盒 Cookie 登录凭证已过期或失效`,
+        `💡 **解决指引**：`,
+        `1. 打开手机 Stream 抓包软件`,
+        `2. 打开小黑盒 App 刷新任意页面`,
+        `3. 复制最新的 \`pkey\` 与 \`x_xhh_tokenid\``,
+        `4. 更新到 GitHub 仓库 Secrets 的 \`HEYBOX_CK\` 变量中`,
+      ].join("\n");
+      summaryList.push(expiredReport);
+      continue;
+    }
+
     const accountReport = [
       `👤 **账号**：${nickname} (ID: ${account.heyboxId})`,
       `📅 **运行时间**：${nowTime}`,

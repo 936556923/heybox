@@ -221,6 +221,20 @@ npm run heybox_rush
 
 ---
 
+## 🔑 Cookie 凭证维护与更新指南
+
+1. **凭证有效期**：
+   - 小黑盒 App 抓取的 `pkey` 与 `x_xhh_tokenid` 有效期很长（只要不在手机 App 内点击“退出登录”，通常可持续使用 **3 ~ 6 个月**）。
+2. **凭证失效微信警示**：
+   - 如果未来凭证自然过期，微信/Bark 会第一时间推送包含 `🚨 账号凭证失效警示` 的通知，提示您更新凭证。
+3. **快速更新凭证步骤**：
+   - 打开手机 **Stream** 抓包软件。
+   - 打开小黑盒 App 刷新任意页面。
+   - 找到任意请求 Header 中的 `Cookie`，复制最新的 `pkey=...;x_xhh_tokenid=...;`。
+   - 打开 GitHub 仓库 **Settings** $\rightarrow$ **Secrets and variables** $\rightarrow$ **Actions**，点击 `HEYBOX_CK` 进行更新即可。
+
+---
+
 ## 安全与免责声明
 
 - 本项目仅供个人学习与技术研究，请勿用于商业用途或恶意并发请求。

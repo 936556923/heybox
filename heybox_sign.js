@@ -553,9 +553,15 @@ async function runAccount(account, runtime) {
   account.log("开始每日任务");
   const client = new HeyboxAppClient(account, { runtime });
   let snapshot = await fetchSnapshot(client);
-  if (snapshot.status === "relogin" || snapshot.msg === "请重新登录") {
-    account.log("账号凭证已失效或过期，请重新登录小黑盒并抓取最新 Cookie (pkey 和 x_xhh_tokenid)");
-    return { ok: false, doneCount: 0 };
+  if (snapshot.status === "relogin" || snapshot.msg === "请重新登录" || snapshot.status === "relogin_required") {
+    account.log("🚨 账号凭证已失效或过期，请重新登录小黑盒并抓取最新 Cookie (pkey 和 x_xhh_tokenid)");
+    return {
+      ok: false,
+      isExpired: true,
+      nickname: account.heyboxId,
+      doneCount: 0,
+      message: "账号凭证已失效或过期，请重新登录抓取 Cookie",
+    };
   }
 
   account.log(`账号=${snapshot.nickname || account.heyboxId} 黑盒ID=${account.heyboxId} IMEI=${account.imei}`);
