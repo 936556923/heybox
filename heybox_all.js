@@ -1,5 +1,5 @@
 /*
-小黑盒 - 全量每日任务整合与微信统一推送
+小黑盒 - 全量每日任务整合与微信统一精细化推送
 账号环境变量:
   heybox_ck=pkey=xxx;x_xhh_tokenid=xxx;
 */
@@ -16,6 +16,21 @@ const claimModule = require("./heybox_claim");
 const rollModule = require("./heybox_roll");
 
 exports.name = "小黑盒.每日全量与微信推送";
+
+function formatNumber(num) {
+  if (num === null || num === undefined || num === "-") return "-";
+  const n = Number(num);
+  return Number.isFinite(n) ? n.toLocaleString() : String(num);
+}
+
+function getTaskIcon(title) {
+  if (/签到/.test(title)) return "📝";
+  if (/帖子|贴子|文章/.test(title)) return "📢";
+  if (/游戏详情/.test(title)) return "🎮";
+  if (/游戏评价|评论/.test(title)) return "💬";
+  if (/发布|发帖|内容/.test(title)) return "✍️";
+  return "📌";
+}
 
 async function run() {
   if (!await $.read_env(HeyboxAccount, DATA_NAME)) return;
@@ -48,6 +63,7 @@ async function run() {
 
   let okCount = 0;
   const summaryList = [];
+  const nowTime = new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
 
   for (const account of $.userList) {
     $.log(`\n=================== 开始执行账号 [${account.heyboxId}] ===================`);
@@ -92,17 +108,43 @@ async function run() {
     const level = signRes?.level || "-";
     const currentExp = signRes?.currentExp;
     const nextLevelExp = signRes?.nextLevelExp;
-    const expText = currentExp && nextLevelExp ? ` (${currentExp}/${nextLevelExp})` : "";
     const battery = signRes?.battery || "-";
 
+    const expText = currentExp && nextLevelExp ? `${formatNumber(currentExp)} / ${formatNumber(nextLevelExp)} EXP` : "暂无";
+    const expDiff = currentExp && nextLevelExp ? Number(nextLevelExp) - Number(currentExp) : 0;
+    const expDiffText = expDiff > 0 ? ` (距升级还差 ${formatNumber(expDiff)} EXP)` : "";
+
+    // 构建极度精细化的任务完成清单
+    const taskLines = [];
+    const taskList = Array.isArray(signRes?.taskList) ? signRes.taskList : [];
+    if (taskList.length) {
+      for (const t of taskList) {
+        const icon = getTaskIcon(t.title);
+        const status = t.isFinished ? "✅ 已完成" : "⚠️ 未完成";
+        const award = t.award ? ` (${t.award})` : "";
+        taskLines.push(`${icon} **${t.title}**：${status}${award}`);
+      }
+    } else {
+      taskLines.push(`📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
+    }
+
     const accountReport = [
-      `👤 账号【${nickname}】`,
-      `📅 签到与分享: ${isOk ? "✅ 全部完成" : "⚠️ 部分未完成"}`,
-      `🎫 优惠券领取: 已新增 ${claimRes.claimedCount || 0} 张 (自动跳过 ${claimRes.skippedCount || 0} 张)`,
-      `🎁 抽奖盒券: 参与完成 ${rollRes.doneCount || 0}/${rollRes.total || rollAwards.length} 个活动`,
-      `💰 盒币余额: ${coin} (≈${coinValue}￥)`,
-      `🌟 当前等级: Lv.${level}${expText}`,
-      `⚡ 当前盒电: ${battery}`,
+      `👤 **账号**：${nickname} (ID: ${account.heyboxId})`,
+      `📅 **运行时间**：${nowTime}`,
+      `---------------------------------------`,
+      `💰 **账户最新资产概览**`,
+      `- 🪙 **盒币余额**：\`${formatNumber(coin)}\` 币 (约 **${coinValue}** 元)`,
+      `- 🌟 **账号等级**：**Lv.${level}** \`(${expText})\`${expDiffText}`,
+      `- ⚡ **盒电余额**：\`${formatNumber(battery)}\` ⚡`,
+      `---------------------------------------`,
+      `📋 **每日任务完成明细**`,
+      taskLines.join("\n"),
+      `---------------------------------------`,
+      `🎁 **拓展福利与活动处理**`,
+      `- 🎫 **优惠券领取**：新增 \`${claimRes.claimedCount || 0}\` 张 (自动跳过 \`${claimRes.skippedCount || 0}\` 张已领券)`,
+      `- 🎲 **0元抽奖盒券**：已处理 \`${rollRes.doneCount || 0}/${rollRes.total || rollAwards.length}\` 个抽奖活动`,
+      `---------------------------------------`,
+      `🎉 **总体运行状态**：${isOk ? "✅ 每日任务 100% 成功完成！" : "⚠️ 存在部分任务未完成"}`,
     ].join("\n");
 
     summaryList.push(accountReport);
@@ -110,9 +152,9 @@ async function run() {
 
   $.log(`\n=================== 执行完毕 (成功 ${okCount}/${$.userList.length}) ===================`);
 
-  // 发送微信 / 多渠道消息推送
-  const title = `小黑盒每日任务总统计 (${okCount}/${$.userList.length})`;
-  const content = summaryList.join("\n\n------------------------------\n\n");
+  // 发送微信 / 多渠道精细化消息推送
+  const title = `📢 小黑盒每日运行报告 (${okCount}/${$.userList.length})`;
+  const content = summaryList.join("\n\n=======================================\n\n");
   await notify.sendNotify(title, content);
 
   process.exitCode = okCount === $.userList.length ? 0 : 1;

@@ -627,6 +627,12 @@ async function runAccount(account, runtime) {
     currentExp: snapshot.currentExp,
     nextLevelExp: snapshot.nextLevelExp,
     battery: snapshot.battery,
+    taskList: allTasks.map((t) => ({
+      title: t.title,
+      state: t.state,
+      isFinished: t.state === FINISH_STATE,
+      award: t.awardText,
+    })),
   };
 }
 
