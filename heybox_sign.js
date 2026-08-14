@@ -286,7 +286,8 @@ async function prepareShareTarget(actionName, client) {
       const feedPayload = await client.getJson(PATH_FEEDS, FEEDS_QUERY_BASE);
       const posts = extractFeedCandidates(feedPayload);
       if (posts.length) {
-        const post = posts[0];
+        // 随机选择帖子，规避固定 ID 被防作弊拦截
+        const post = tools.randomArray(posts) || posts[0];
         try {
           await client.postEncryptedForm(
             PATH_VIEW_TIME,
@@ -322,7 +323,7 @@ async function prepareShareTarget(actionName, client) {
       const payload = await client.getJson(PATH_GAME_RECOMMEND, GAME_RECOMMEND_QUERY_BASE);
       const games = extractRecommendGameCandidates(payload);
       if (games.length) {
-        const game = games[0];
+        const game = tools.randomArray(games) || games[0];
         try {
           await client.getJson(PATH_SHARED, {
             act_id: `_game_detail_${game.appid}`,
@@ -338,14 +339,14 @@ async function prepareShareTarget(actionName, client) {
       const recommendPayload = await client.getJson(PATH_GAME_RECOMMEND, GAME_RECOMMEND_QUERY_BASE);
       const games = extractRecommendGameCandidates(recommendPayload);
       if (games.length) {
-        const game = games[0];
+        const game = tools.randomArray(games) || games[0];
         const commentsPayload = await client.getJson(PATH_GAME_COMMENTS, {
           ...GAME_COMMENTS_QUERY_BASE,
           appid: game.appid,
         });
         const comment = extractGameCommentCandidate(commentsPayload);
         if (comment) {
-          return { source: "game_comment", extra: { link_id: comment.linkId } };
+          return { source: "game_comment", extra: { link_id: comment.linkId, h_src: comment.hSrc } };
         }
       }
     } catch (e) {}
@@ -359,10 +360,14 @@ async function executeShareByServer(task, client, fetchSnapshotFn) {
     return { ok: false, unsupported: true, message: `${task.title} 未匹配到分享任务模式` };
   }
 
-  // 0. 获取真实点击实体的参数 (link_id / app_id / h_src)
+  // 0. 获取随机真实点击实体的参数 (link_id / app_id / h_src)
   const prepared = await prepareShareTarget(action.taskName, client);
 
-  // 1. 优先尝试原生带实体参数加密上报 (sendShareEvents)
+  // 1. 模拟真实微信分享页面深度停留 (5.2秒)
+  client.account.log(`[防拦截] 模拟真实文章与深度页面阅读停留 5.2 秒...`);
+  await tools.sleep(POST_SHARE_VIEW_MILLISECONDS + 200);
+
+  // 2. 优先尝试原生带实体参数加密上报 (sendShareEvents)
   try {
     await sendShareEvents(client, prepared.source, prepared.extra);
   } catch (err) {
