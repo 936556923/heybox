@@ -121,21 +121,21 @@ async function run() {
         const icon = getTaskIcon(t.title);
         const status = t.isFinished ? "✅ 已完成" : "⚠️ 未完成";
         const award = t.award ? ` (${t.award})` : "";
-        taskLines.push(`${icon} **${t.title}**：${status}${award}`);
+        taskLines.push(`- ${icon} **${t.title}**：${status}${award}`);
       }
     } else {
-      taskLines.push(`📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
+      taskLines.push(`- 📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
     }
 
     if (signRes?.isExpired) {
       const expiredReport = [
-        `🚨 **账号凭证失效警示**`,
-        `👤 **账号 ID**：${account.heyboxId}`,
-        `📅 **检测时间**：${nowTime}`,
+        `🚨 **账号凭证失效警示**  `,
+        `👤 **账号 ID**：${account.heyboxId}  `,
+        `📅 **检测时间**：${nowTime}  `,
         ``,
         `---`,
-        `⚠️ **问题原因**：小黑盒 Cookie 登录凭证已过期或失效`,
-        `💡 **解决指引**：`,
+        `⚠️ **问题原因**：小黑盒 Cookie 登录凭证已过期或失效  `,
+        `💡 **解决指引**：  `,
         `1. 打开手机 Stream 抓包软件`,
         `2. 打开小黑盒 App 刷新任意页面`,
         `3. 复制最新的 \`pkey\` 与 \`x_xhh_tokenid\``,
@@ -146,8 +146,8 @@ async function run() {
     }
 
     const accountReport = [
-      `👤 **账号**：${nickname} (ID: ${account.heyboxId})`,
-      `📅 **运行时间**：${nowTime}`,
+      `👤 **账号**：${nickname} (ID: ${account.heyboxId})  `,
+      `📅 **运行时间**：${nowTime}  `,
       ``,
       `---`,
       `💰 **账户最新资产概览**`,
@@ -175,7 +175,7 @@ async function run() {
 
   // 发送微信 / 多渠道精细化消息推送
   const title = `📢 小黑盒每日运行报告 (${okCount}/${$.userList.length})`;
-  const content = summaryList.join("\n\n=======================================\n\n");
+  const content = summaryList.join("\n\n---\n\n");
   await notify.sendNotify(title, content);
 
   process.exitCode = okCount === $.userList.length ? 0 : 1;
