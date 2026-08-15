@@ -192,13 +192,18 @@ function extractTaskList(payload) {
     }
   }
 
+  const getVal = (val) => {
+    const txt = tools.toText(val);
+    return txt !== "" ? txt : "-";
+  };
+
   return {
     nickname: tools.toText(user.username),
-    coin: tools.toText(levelInfo.coin),
-    level: tools.toText(levelInfo.level),
+    coin: getVal(levelInfo.coin),
+    level: getVal(levelInfo.level),
     currentExp: tools.toText(levelInfo.current_exp || levelInfo.exp),
     nextLevelExp: tools.toText(levelInfo.next_level_exp),
-    battery: tools.toText(user.battery),
+    battery: getVal(user.battery),
     tasks,
   };
 }

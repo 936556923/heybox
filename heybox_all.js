@@ -103,18 +103,17 @@ async function run() {
     if (isOk) okCount += 1;
 
     const nickname = signRes?.nickname || account.heyboxId;
-    const coin = signRes?.coin || "-";
-    const coinValue = signRes?.coinValue || "-";
-    const level = signRes?.level || "-";
+    const coinStr = (signRes?.coin && signRes.coin !== "") ? signRes.coin : "-";
+    const coinValueStr = (signRes?.coinValue && signRes.coinValue !== "" && signRes.coinValue !== "未知") ? signRes.coinValue : null;
+    const levelStr = (signRes?.level && signRes.level !== "") ? signRes.level : "-";
     const currentExp = signRes?.currentExp;
     const nextLevelExp = signRes?.nextLevelExp;
-    const battery = signRes?.battery || "-";
+    const batteryStr = (signRes?.battery && signRes.battery !== "") ? signRes.battery : "-";
 
     const expText = currentExp && nextLevelExp ? `${formatNumber(currentExp)} / ${formatNumber(nextLevelExp)} EXP` : "暂无";
     const expDiff = currentExp && nextLevelExp ? Number(nextLevelExp) - Number(currentExp) : 0;
     const expDiffText = expDiff > 0 ? ` (距升级还差 ${formatNumber(expDiff)} EXP)` : "";
 
-    // 构建极度精细化的任务完成清单
     const taskLines = [];
     const taskList = Array.isArray(signRes?.taskList) ? signRes.taskList : [];
     if (taskList.length) {
@@ -128,13 +127,13 @@ async function run() {
       taskLines.push(`📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
     }
 
-    // 如果账号凭证过期失效
     if (signRes?.isExpired) {
       const expiredReport = [
         `🚨 **账号凭证失效警示**`,
         `👤 **账号 ID**：${account.heyboxId}`,
         `📅 **检测时间**：${nowTime}`,
-        `---------------------------------------`,
+        ``,
+        `---`,
         `⚠️ **问题原因**：小黑盒 Cookie 登录凭证已过期或失效`,
         `💡 **解决指引**：`,
         `1. 打开手机 Stream 抓包软件`,
@@ -149,19 +148,23 @@ async function run() {
     const accountReport = [
       `👤 **账号**：${nickname} (ID: ${account.heyboxId})`,
       `📅 **运行时间**：${nowTime}`,
-      `---------------------------------------`,
+      ``,
+      `---`,
       `💰 **账户最新资产概览**`,
-      `- 🪙 **盒币余额**：\`${formatNumber(coin)}\` 币 (约 **${coinValue}** 元)`,
-      `- 🌟 **账号等级**：**Lv.${level}** \`(${expText})\`${expDiffText}`,
-      `- ⚡ **盒电余额**：\`${formatNumber(battery)}\` ⚡`,
-      `---------------------------------------`,
+      `- 🪙 **盒币余额**：\`${formatNumber(coinStr)}\` 币${coinValueStr ? ` (约 **${coinValueStr}** 元)` : ""}`,
+      `- 🌟 **账号等级**：**Lv.${levelStr}**${expText !== "暂无" ? ` \`(${expText})\`` : ""}${expDiffText}`,
+      `- ⚡ **盒电余额**：\`${formatNumber(batteryStr)}\` ⚡`,
+      ``,
+      `---`,
       `📋 **每日任务完成明细**`,
       taskLines.join("\n"),
-      `---------------------------------------`,
+      ``,
+      `---`,
       `🎁 **拓展福利与活动处理**`,
       `- 🎫 **优惠券领取**：新增 \`${claimRes.claimedCount || 0}\` 张 (自动跳过 \`${claimRes.skippedCount || 0}\` 张已领券)`,
       `- 🎲 **0元抽奖盒券**：已处理 \`${rollRes.doneCount || 0}/${rollRes.total || rollAwards.length}\` 个抽奖活动`,
-      `---------------------------------------`,
+      ``,
+      `---`,
       `🎉 **总体运行状态**：${isOk ? "✅ 每日任务 100% 成功完成！" : "⚠️ 存在部分任务未完成"}`,
     ].join("\n");
 

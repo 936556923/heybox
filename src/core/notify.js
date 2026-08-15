@@ -28,8 +28,8 @@ async function sendPushPlus(token, title, content) {
       body: JSON.stringify({
         token,
         title,
-        content: content.replace(/\n/g, "<br/>"),
-        template: "html",
+        content,
+        template: "markdown",
       }),
     });
     return true;
