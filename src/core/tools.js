@@ -49,6 +49,17 @@ function mask(input) {
     .replace(/(nonce=)[^&\s]+/gi, "$1<redacted>");
 }
 
+function randomInt(min, max) {
+  const minBoundary = Math.ceil(min);
+  const maxBoundary = Math.floor(max);
+  return Math.floor(Math.random() * (maxBoundary - minBoundary + 1)) + minBoundary;
+}
+
+function randomArray(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 module.exports = {
   toText,
   splitEnv,
@@ -57,4 +68,6 @@ module.exports = {
   log,
   safeFileName,
   mask,
+  randomInt,
+  randomArray,
 };
