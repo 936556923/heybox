@@ -65,6 +65,7 @@ async function loadTargets(client, claimedSet) {
   const targets = [];
   const seen = new Set();
   let lastval = "";
+  let skippedCount = 0;
 
   for (let page = 1; page <= CONFIG.maxPages; page += 1) {
     const payload = await client.getJson(PATH_DETAIL, {
@@ -84,10 +85,14 @@ async function loadTargets(client, claimedSet) {
     const games = Array.isArray(result.games) ? result.games : [];
     for (const item of games) {
       const itemId = String(item.id);
-      if (claimedSet.has(itemId)) continue;
+      if (claimedSet.has(itemId)) {
+        skippedCount += 1;
+        continue;
+      }
       if (!isClaimableCoupon(item)) {
         if (item?.is_get === true || item?.is_get === 1 || item?.is_get === "1") {
           claimedSet.add(itemId);
+          skippedCount += 1;
         }
         continue;
       }
@@ -105,7 +110,7 @@ async function loadTargets(client, claimedSet) {
     lastval = nextLastval;
   }
   saveClaimedCache(client.account.heyboxId, claimedSet);
-  return targets;
+  return { targets, skippedCount };
 }
 
 async function claimCoupon(client, itemId, session) {
@@ -144,7 +149,8 @@ function isPageExpired(message) {
 async function claimWithFreshSession(client, target) {
   let lastPayload = null;
   for (let attempt = 0; attempt <= CONFIG.sessionRetry; attempt += 1) {
-    const session = await refreshClaimSession(client);
+    // 首次尝试复用列表页携带的 session，仅在页面过期时刷新，减少请求量
+    const session = attempt === 0 ? target.session : await refreshClaimSession(client);
     const payload = await claimCoupon(client, target.itemId, session);
     const message = resultMessage(payload);
     lastPayload = payload;
@@ -160,10 +166,10 @@ async function runAccount(account) {
   const client = new HeyboxWebClient(account);
   account.log(`开始领券 heybox_id=${account.heyboxId}`);
   const claimedSet = getClaimedCache(account.heyboxId);
-  const targets = await loadTargets(client, claimedSet);
+  const { targets, skippedCount } = await loadTargets(client, claimedSet);
   if (!targets.length) {
-    account.log(`没有需要领取的优惠券 (已自动跳过 ${claimedSet.size} 张已领取的优惠券)`);
-    return { claimedCount: 0, skippedCount: claimedSet.size };
+    account.log(`没有需要领取的优惠券 (已自动跳过 ${skippedCount} 张已领取的优惠券)`);
+    return { claimedCount: 0, skippedCount };
   }
 
   let claimedCount = 0;
@@ -186,7 +192,7 @@ async function runAccount(account) {
     }
     if (CONFIG.delayMs > 0) await tools.sleep(CONFIG.delayMs);
   }
-  return { claimedCount, skippedCount: claimedSet.size - claimedCount };
+  return { claimedCount, skippedCount };
 }
 
 async function run() {
@@ -207,4 +213,4 @@ module.exports = {
   runAccount,
 };
 
-if (require.main === module) $.start(exports);
+if (require.main === module) $.start(module.exports);

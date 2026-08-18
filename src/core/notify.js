@@ -23,7 +23,7 @@ async function sendPushPlus(token, title, content) {
   if (!token) return false;
   try {
     await client.post({
-      url: "http://www.pushplus.plus/send",
+      url: "https://www.pushplus.plus/send",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         token,

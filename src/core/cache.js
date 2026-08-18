@@ -44,7 +44,14 @@ class Cache {
       const now = Date.now();
       for (const f of files) {
         const fullPath = path.join(dir, f);
-        const stat = fs.statSync(fullPath);
+        let stat;
+        try {
+          stat = fs.statSync(fullPath);
+        } catch {
+          continue;
+        }
+        // 跳过子目录，避免 unlinkSync 抛 EISDIR 中断整批清理
+        if (!stat.isFile()) continue;
         if (now - stat.mtimeMs > maxAgeMs) {
           fs.unlinkSync(fullPath);
         }

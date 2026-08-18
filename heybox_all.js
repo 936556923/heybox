@@ -126,6 +126,10 @@ async function run() {
     } else {
       taskLines.push(`- 📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
     }
+    const unsupportedTasks = Array.isArray(signRes?.unsupportedTasks) ? signRes.unsupportedTasks : [];
+    if (unsupportedTasks.length) {
+      taskLines.push(`- ⚠️ **以下任务暂不支持自动完成**：${unsupportedTasks.join("、")}`);
+    }
 
     if (signRes?.isExpired) {
       const expiredReport = [
@@ -162,7 +166,9 @@ async function run() {
       `---`,
       `🎁 **拓展福利与活动处理**`,
       `- 🎫 **优惠券领取**：新增 \`${claimRes.claimedCount || 0}\` 张 (自动跳过 \`${claimRes.skippedCount || 0}\` 张已领券)`,
-      `- 🎲 **0元抽奖盒券**：已处理 \`${rollRes.doneCount || 0}/${rollRes.total || rollAwards.length}\` 个抽奖活动`,
+      `- 🎲 **0元抽奖盒券**：${rollAwards.length
+        ? `已尝试 \`${rollRes.runCount || 0}\` 个活动 (完成 \`${rollRes.doneCount || 0}/${rollRes.total || rollAwards.length}\`)`
+        : "未发现进行中的抽奖活动"}`,
       ``,
       `---`,
       `🎉 **总体运行状态**：${isOk ? "✅ 每日任务 100% 成功完成！" : "⚠️ 存在部分任务未完成"}`,

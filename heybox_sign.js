@@ -71,7 +71,8 @@ const SHARE_TASK_ACTIONS = Object.freeze([
   },
   {
     taskName: "shareGameComment",
-    titlePattern: /分享.*(游戏评价|评论)|发表.*(游戏评价)/,
+    // 仅匹配"分享"类任务；"发表游戏评价"是发布评价任务，分享上报流程无法完成，避免误判
+    titlePattern: /分享.*(游戏评价|评论)|前往.*(游戏评价|评论)/,
   },
 ]);
 
@@ -201,8 +202,9 @@ function extractTaskList(payload) {
     nickname: tools.toText(user.username),
     coin: getVal(levelInfo.coin),
     level: getVal(levelInfo.level),
+    // 接口字段为 exp(当前等级经验) / max_exp(当前等级经验上限)，无 next_level_exp
     currentExp: tools.toText(levelInfo.current_exp || levelInfo.exp),
-    nextLevelExp: tools.toText(levelInfo.next_level_exp),
+    nextLevelExp: tools.toText(levelInfo.max_exp || levelInfo.next_level_exp),
     battery: getVal(user.battery),
     tasks,
   };
@@ -379,20 +381,21 @@ async function executeShareByServer(task, client, fetchSnapshotFn) {
     // 忽略异常，继续备用方式
   }
 
-  // 2. 备用远程 task hkey 上报
+  // 3. 备用远程 task hkey 上报
   try {
     const hkeyInfo = await getTaskHkey(client.account.heyboxId, action.taskName);
     if (hkeyInfo && hkeyInfo.hkey) {
       const version = hkeyInfo.version || "1.3.347";
       const build = hkeyInfo.build || "916";
+      const timestamp = hkeyInfo.timestamp || Math.floor(Date.now() / 1000);
       const queryParams = client.buildSignedQuery(PATH_DATA_REPORT, {
         hkey: hkeyInfo.hkey,
         version: version,
         build: build,
-        time: hkeyInfo.timestamp,
+        time: timestamp,
       }, {
         type: "104",
-        time_: hkeyInfo.timestamp,
+        time_: timestamp,
         session_id: crypto.randomUUID(),
       });
       const query = buildQueryString(queryParams);
@@ -508,6 +511,10 @@ function isPostContentTask(task) {
   return task.taskId === "33" || /发布.*(内容|帖子)|发帖/.test(task.title);
 }
 
+function isSupportedTask(task) {
+  return isDailyTask(task) || isShareTask(task) || isPostContentTask(task) || Boolean(TASK_HANDLERS[task.taskId]);
+}
+
 async function executeTask(task, client, fetchSnapshotFn) {
   // 签到任务
   if (isSignTask(task)) {
@@ -574,9 +581,7 @@ async function runAccount(account, runtime) {
   const unsupported = new Set();
   const done = new Set();
   // 支持所有已实现的任务类型（每日任务 + time_limit 任务）
-  const allTasks = snapshot.tasks.filter(
-    (task) => isDailyTask(task) || isShareTask(task) || isPostContentTask(task) || TASK_HANDLERS[task.taskId],
-  );
+  const allTasks = snapshot.tasks.filter(isSupportedTask);
   for (const task of allTasks) {
     if (task.state === FINISH_STATE) {
       done.add(task.title || taskKey(task));
@@ -631,8 +636,14 @@ async function runAccount(account, runtime) {
   account.log(`当前盒币: ${snapshot.coin || "未知"} ≈ ${coinValue}￥`);
   account.log(`当前等级: Lv.${snapshot.level || "未知"}${expStr}`);
   account.log(`当前盒电: ${snapshot.battery || "未知"}`);
-  if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
   const waiting = snapshot.tasks.filter((task) => isDailyTask(task) && task.state === WAITING_STATE);
+  // 收集所有等待中但无法自动完成的任务（如限时任务"发表游戏评价"、灵感推荐），便于报告透明展示
+  for (const task of snapshot.tasks) {
+    if (task.state === WAITING_STATE && !isSupportedTask(task)) {
+      unsupported.add(task.title || taskKey(task));
+    }
+  }
+  if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
   return {
     ok: waiting.length === 0,
     doneCount: done.size,
@@ -643,7 +654,9 @@ async function runAccount(account, runtime) {
     currentExp: snapshot.currentExp,
     nextLevelExp: snapshot.nextLevelExp,
     battery: snapshot.battery,
-    taskList: allTasks.map((t) => ({
+    unsupportedTasks: Array.from(unsupported),
+    // 基于最终快照构建任务清单，避免报告展示过期状态
+    taskList: snapshot.tasks.filter(isSupportedTask).map((t) => ({
       title: t.title,
       state: t.state,
       isFinished: t.state === FINISH_STATE,
@@ -697,4 +710,4 @@ module.exports = {
   runAccount,
 };
 
-if (require.main === module) $.start(exports);
+if (require.main === module) $.start(module.exports);

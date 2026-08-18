@@ -11,10 +11,10 @@ class HttpClient {
   isRetryable(error) {
     const code = error && error.code;
     const message = tools.toText(error && error.message);
-    return (
-      error && error.name === "TimeoutError" ||
+    return Boolean(
+      (error && error.name === "TimeoutError") ||
       ["ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ECONNABORTED"].includes(code) ||
-      message.includes("socket hang up")
+      message.includes("socket hang up"),
     );
   }
 

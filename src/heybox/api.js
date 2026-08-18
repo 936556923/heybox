@@ -131,6 +131,9 @@ class HeyboxAppClient extends HttpClient {
       }),
     });
     const rp = hkeyResponse.result?.result || {};
+    if (!rp.hkey) {
+      throw new Error(`hkey report 接口未返回 hkey: ${JSON.stringify(hkeyResponse.result).slice(0, 200)}`);
+    }
     if (rp.version) this.runtime.version = rp.version;
     if (rp.build) this.runtime.build = rp.build;
     const query = buildQueryString(this.buildSignedQuery(path, {

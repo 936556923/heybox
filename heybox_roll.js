@@ -3,7 +3,7 @@
 账号环境变量:
   heybox_ck=pkey=xxx;x_xhh_tokenid=xxx;
 */
-const { $, tools } = require("./src/core");
+const { $, tools, Cache } = require("./src/core");
 const {
   API_BASE,
   DATA_NAME,
@@ -411,9 +411,8 @@ function saveRollCache(heyboxId, doneSet) {
   } catch (e) {}
 }
 
-async function runAward(account, webClient, appClient, award) {
+async function runAward(account, webClient, appClient, award, doneSet) {
   const awardId = award.awardId;
-  const doneSet = getRollCache(account.heyboxId);
 
   let home = await fetchHome(webClient, awardId);
 
@@ -477,13 +476,14 @@ async function runAward(account, webClient, appClient, award) {
 async function runAccount(account, awards) {
   const webClient = new HeyboxWebClient(account);
   const appClient = new HeyboxAppClient(account);
+  const doneSet = getRollCache(account.heyboxId);
   let runCount = 0;
   let skipCount = 0;
   let doneCount = 0;
 
   for (const award of awards) {
     try {
-      const result = await runAward(account, webClient, appClient, award);
+      const result = await runAward(account, webClient, appClient, award, doneSet);
       if (result.skipped) skipCount += 1;
       else runCount += 1;
       if (result.done) doneCount += 1;
@@ -493,6 +493,7 @@ async function runAccount(account, awards) {
       process.exitCode = 1;
     }
   }
+  saveRollCache(account.heyboxId, doneSet);
 
   account.log(`抽奖活动处理完成: 跑=${runCount}, 跳过=${skipCount}, 当前完成=${doneCount}/${awards.length}`);
   return { runCount, skipCount, doneCount, total: awards.length };
@@ -527,4 +528,4 @@ module.exports = {
   discoverAwardIds,
 };
 
-if (require.main === module) $.start(exports);
+if (require.main === module) $.start(module.exports);
