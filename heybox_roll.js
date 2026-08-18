@@ -415,8 +415,7 @@ function saveRollCache(heyboxId, doneSet) {
 // 当日已处理活动缓存：同一活动一天内只完整处理一次，避免同日重复运行(如手动触发)
 // 时对同一批活动反复发起大量请求，降低风控风险
 function todayKey() {
-  // 使用北京时间(UTC+8)日期，避免 UTC 日期与国内日期错位
-  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
 }
 
 function getRollTouchedCache(heyboxId) {
@@ -510,6 +509,7 @@ async function runAccount(account, awards) {
 
   for (const award of awards) {
     if (touched.has(award.awardId)) {
+      if (doneSet.has(award.awardId)) doneCount += 1;
       account.log(`抽奖活动 award_id=${award.awardId} ${award.awardName || "".trim()}: 今日已处理过，跳过重复请求`);
       skipCount += 1;
       continue;

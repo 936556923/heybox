@@ -220,6 +220,7 @@ class HeyboxWebClient extends HttpClient {
       timeoutMs: options.timeoutMs,
       retries: options.retries,
     });
+    assertNoRisk(response.result, `GET ${path}`);
     return response.result;
   }
 
@@ -233,6 +234,7 @@ class HeyboxWebClient extends HttpClient {
       timeoutMs: options.timeoutMs,
       retries: options.retries,
     });
+    assertNoRisk(response.result, `POST ${path}`);
     return response.result;
   }
 }

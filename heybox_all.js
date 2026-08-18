@@ -70,12 +70,13 @@ async function run() {
     $.log(`\n=================== 开始执行账号 [${account.heyboxId}] ===================`);
     let riskStopped = false;
 
-    // 1. 执行每日签到与分享任务
     let signRes = null;
+    let signFailed = false;
     try {
       signRes = await signModule.runAccount(account, runtime);
       if (signRes && signRes.riskStopped) riskStopped = true;
     } catch (e) {
+      signFailed = true;
       account.log(`签到任务失败: ${e.message}`);
       if (isRiskError(e)) riskStopped = true;
     }
@@ -84,10 +85,12 @@ async function run() {
 
     // 2. 执行普通领券
     let claimRes = { claimedCount: 0, skippedCount: 0 };
+    let claimFailed = false;
     if (!riskStopped) {
       try {
         claimRes = await claimModule.runAccount(account) || claimRes;
       } catch (e) {
+        claimFailed = true;
         account.log(`领券任务失败: ${e.message}`);
         if (isRiskError(e)) riskStopped = true;
       }
@@ -99,12 +102,14 @@ async function run() {
 
     // 3. 执行0元抽奖盒券
     let rollRes = { runCount: 0, skipCount: 0, doneCount: 0, total: 0 };
+    let rollFailed = false;
     if (!riskStopped) {
       try {
         if (rollAwards.length) {
           rollRes = await rollModule.runAccount(account, rollAwards) || rollRes;
         }
       } catch (e) {
+        rollFailed = true;
         account.log(`抽奖任务失败: ${e.message}`);
         if (isRiskError(e)) riskStopped = true;
       }
@@ -113,7 +118,7 @@ async function run() {
     }
 
     // 校验整体账号状态
-    const isOk = signRes && signRes.ok;
+    const isOk = !signFailed && !claimFailed && !rollFailed && Boolean(signRes?.ok);
     if (isOk) okCount += 1;
 
     const nickname = signRes?.nickname || account.heyboxId;
