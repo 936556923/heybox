@@ -15,6 +15,7 @@ const {
   HeyboxAppClient,
   OK_STATE,
   PATH_DATA_REPORT,
+  isRiskError,
   sendShareEvents,
 } = require("./src/heybox");
 const { buildQueryString } = require("./src/heybox/signature");
@@ -521,6 +522,7 @@ async function executeTask(task, client, fetchSnapshotFn) {
     try {
       return await executeSign(client);
     } catch (error) {
+      if (isRiskError(error)) throw error;
       return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
     }
   }
@@ -530,6 +532,7 @@ async function executeTask(task, client, fetchSnapshotFn) {
     try {
       return await executeShareByServer(task, client, fetchSnapshotFn);
     } catch (error) {
+      if (isRiskError(error)) throw error;
       return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
     }
   }
@@ -539,6 +542,7 @@ async function executeTask(task, client, fetchSnapshotFn) {
     try {
       return await executeTimeLimitTask(task, client, fetchSnapshotFn);
     } catch (error) {
+      if (isRiskError(error)) throw error;
       return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
     }
   }
@@ -549,6 +553,7 @@ async function executeTask(task, client, fetchSnapshotFn) {
   try {
     return await handler(task, client, fetchSnapshotFn);
   } catch (error) {
+    if (isRiskError(error)) throw error;
     return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
   }
 }
@@ -580,6 +585,7 @@ async function runAccount(account, runtime) {
 
   const unsupported = new Set();
   const done = new Set();
+  let riskStopped = false;
   // 支持所有已实现的任务类型（每日任务 + time_limit 任务）
   const allTasks = snapshot.tasks.filter(isSupportedTask);
   for (const task of allTasks) {
@@ -590,8 +596,8 @@ async function runAccount(account, runtime) {
     }
   }
 
-  const TASK_INTERVAL_MIN_MS = 2000;
-  const TASK_INTERVAL_MAX_MS = 4000;
+  const TASK_INTERVAL_MIN_MS = 3000;
+  const TASK_INTERVAL_MAX_MS = 6000;
 
   const waitingTasks = allTasks.filter((item) => item.state === WAITING_STATE);
   if (waitingTasks.length === 0) {
@@ -609,7 +615,17 @@ async function runAccount(account, runtime) {
       const latestTask = findTaskByKey(snapshot, key);
       if (!latestTask || latestTask.state !== WAITING_STATE) continue;
 
-      const result = await executeTask(latestTask, client, () => fetchSnapshot(client));
+      let result;
+      try {
+        result = await executeTask(latestTask, client, () => fetchSnapshot(client));
+      } catch (error) {
+        if (isRiskError(error)) {
+          account.log(`🚨 检测到风控信号，已停止该账号后续任务: ${error.message}`);
+          riskStopped = true;
+          break;
+        }
+        throw error;
+      }
       if (result.unsupported) {
         unsupported.add(latestTask.title || key);
         continue;
@@ -628,7 +644,10 @@ async function runAccount(account, runtime) {
     }
   }
 
-  snapshot = await fetchSnapshot(client);
+  // 触发风控时不再发起后续请求，使用最后一次快照数据
+  if (!riskStopped) {
+    snapshot = await fetchSnapshot(client);
+  }
   const coinValue = Number.isFinite(Number(snapshot.coin)) ? Number(snapshot.coin) / 1000 : "未知";
   const expStr = snapshot.currentExp && snapshot.nextLevelExp
     ? ` (${snapshot.currentExp}/${snapshot.nextLevelExp} EXP, 距升级差 ${Number(snapshot.nextLevelExp) - Number(snapshot.currentExp)})`
@@ -645,7 +664,7 @@ async function runAccount(account, runtime) {
   }
   if (unsupported.size) account.log(`未支持任务: ${Array.from(unsupported).join(" | ")}`);
   return {
-    ok: waiting.length === 0,
+    ok: waiting.length === 0 && !riskStopped,
     doneCount: done.size,
     nickname: snapshot.nickname || account.heyboxId,
     coin: snapshot.coin,
@@ -654,6 +673,7 @@ async function runAccount(account, runtime) {
     currentExp: snapshot.currentExp,
     nextLevelExp: snapshot.nextLevelExp,
     battery: snapshot.battery,
+    riskStopped,
     unsupportedTasks: Array.from(unsupported),
     // 基于最终快照构建任务清单，避免报告展示过期状态
     taskList: snapshot.tasks.filter(isSupportedTask).map((t) => ({

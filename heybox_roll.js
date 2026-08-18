@@ -11,6 +11,7 @@ const {
   HeyboxAppClient,
   HeyboxWebClient,
   OK_STATE,
+  isRiskError,
   sendShareEvents,
   sendWebShareEvent,
 } = require("./src/heybox");
@@ -411,6 +412,31 @@ function saveRollCache(heyboxId, doneSet) {
   } catch (e) {}
 }
 
+// 当日已处理活动缓存：同一活动一天内只完整处理一次，避免同日重复运行(如手动触发)
+// 时对同一批活动反复发起大量请求，降低风控风险
+function todayKey() {
+  // 使用北京时间(UTC+8)日期，避免 UTC 日期与国内日期错位
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function getRollTouchedCache(heyboxId) {
+  try {
+    const raw = Cache.read("heybox_roll", `touched_${heyboxId}`);
+    if (raw) {
+      const obj = JSON.parse(raw);
+      const today = todayKey();
+      return new Map(Object.entries(obj).filter(([, day]) => day === today));
+    }
+  } catch (e) {}
+  return new Map();
+}
+
+function saveRollTouchedCache(heyboxId, touched) {
+  try {
+    Cache.write("heybox_roll", `touched_${heyboxId}`, JSON.stringify(Object.fromEntries(touched)));
+  } catch (e) {}
+}
+
 async function runAward(account, webClient, appClient, award, doneSet) {
   const awardId = award.awardId;
 
@@ -477,18 +503,31 @@ async function runAccount(account, awards) {
   const webClient = new HeyboxWebClient(account);
   const appClient = new HeyboxAppClient(account);
   const doneSet = getRollCache(account.heyboxId);
+  const touched = getRollTouchedCache(account.heyboxId);
   let runCount = 0;
   let skipCount = 0;
   let doneCount = 0;
 
   for (const award of awards) {
+    if (touched.has(award.awardId)) {
+      account.log(`抽奖活动 award_id=${award.awardId} ${award.awardName || "".trim()}: 今日已处理过，跳过重复请求`);
+      skipCount += 1;
+      continue;
+    }
     try {
       const result = await runAward(account, webClient, appClient, award, doneSet);
       if (result.skipped) skipCount += 1;
       else runCount += 1;
       if (result.done) doneCount += 1;
+      // 无论完成与否，今日不再重复处理该活动
+      touched.set(award.awardId, todayKey());
+      saveRollTouchedCache(account.heyboxId, touched);
       await tools.sleep(500);
     } catch (error) {
+      if (isRiskError(error)) {
+        account.log(`🚨 检测到风控信号，已停止该账号后续抽奖任务: ${error.message}`);
+        throw error;
+      }
       account.log(`award_id=${award.awardId} 处理失败: ${error.message}`);
       process.exitCode = 1;
     }

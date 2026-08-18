@@ -17,6 +17,29 @@ const {
   makeWebSignature,
 } = require("./signature");
 
+// 风控/限流特征识别：命中后抛 RiskError，上层熔断停止后续操作，避免继续触发风控
+const RISK_PATTERN = /频繁|限流|风控|安全验证|验证码|操作过快|操作过于频繁|异常登录|账号异常|登录异常|封禁|冻结|涉嫌|恶意|risk|too many|rate limit/i;
+
+class RiskError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "RiskError";
+    this.isRisk = true;
+  }
+}
+
+function isRiskError(error) {
+  return Boolean(error && (error.isRisk === true || RISK_PATTERN.test(tools.toText(error.message))));
+}
+
+function assertNoRisk(payload, context) {
+  if (!payload || typeof payload !== "object") return;
+  const msg = `${tools.toText(payload.msg)} ${tools.toText(payload.message)} ${tools.toText(payload.error)}`.trim();
+  if (RISK_PATTERN.test(msg)) {
+    throw new RiskError(`${context} 触发风控信号: ${msg.slice(0, 120)}`);
+  }
+}
+
 class HeyboxAppClient extends HttpClient {
   constructor(account, options = {}) {
     super({ timeoutMs: options.timeoutMs || 15000, retries: options.retries || 0 });
@@ -95,6 +118,7 @@ class HeyboxAppClient extends HttpClient {
       timeoutMs: options.timeoutMs,
       retries: options.retries,
     });
+    assertNoRisk(response.result, `GET ${path}`);
     return response.result;
   }
 
@@ -113,6 +137,7 @@ class HeyboxAppClient extends HttpClient {
       timeoutMs: options.timeoutMs,
       retries: options.retries,
     });
+    assertNoRisk(response.result, `POST ${path}`);
     return response.result;
   }
 
@@ -150,6 +175,7 @@ class HeyboxAppClient extends HttpClient {
       timeoutMs: options.timeoutMs,
       retries: options.retries,
     });
+    assertNoRisk(response.result, `POST ${path}`);
     return response.result;
   }
 }
@@ -214,4 +240,6 @@ class HeyboxWebClient extends HttpClient {
 module.exports = {
   HeyboxAppClient,
   HeyboxWebClient,
+  RiskError,
+  isRiskError,
 };

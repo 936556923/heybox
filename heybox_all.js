@@ -9,6 +9,7 @@ const {
   HeyboxAccount,
   HeyboxAppClient,
   HeyboxWebClient,
+  isRiskError,
 } = require("./src/heybox");
 
 const signModule = require("./heybox_sign");
@@ -67,35 +68,48 @@ async function run() {
 
   for (const account of $.userList) {
     $.log(`\n=================== 开始执行账号 [${account.heyboxId}] ===================`);
-    
+    let riskStopped = false;
+
     // 1. 执行每日签到与分享任务
     let signRes = null;
     try {
       signRes = await signModule.runAccount(account, runtime);
+      if (signRes && signRes.riskStopped) riskStopped = true;
     } catch (e) {
       account.log(`签到任务失败: ${e.message}`);
+      if (isRiskError(e)) riskStopped = true;
     }
 
-    await tools.sleep(1500);
+    await tools.sleep(tools.randomInt(3000, 5000));
 
     // 2. 执行普通领券
     let claimRes = { claimedCount: 0, skippedCount: 0 };
-    try {
-      claimRes = await claimModule.runAccount(account) || claimRes;
-    } catch (e) {
-      account.log(`领券任务失败: ${e.message}`);
+    if (!riskStopped) {
+      try {
+        claimRes = await claimModule.runAccount(account) || claimRes;
+      } catch (e) {
+        account.log(`领券任务失败: ${e.message}`);
+        if (isRiskError(e)) riskStopped = true;
+      }
+    } else {
+      account.log("🚨 检测到风控信号，跳过领券任务");
     }
 
-    await tools.sleep(1500);
+    await tools.sleep(tools.randomInt(3000, 5000));
 
     // 3. 执行0元抽奖盒券
     let rollRes = { runCount: 0, skipCount: 0, doneCount: 0, total: 0 };
-    try {
-      if (rollAwards.length) {
-        rollRes = await rollModule.runAccount(account, rollAwards) || rollRes;
+    if (!riskStopped) {
+      try {
+        if (rollAwards.length) {
+          rollRes = await rollModule.runAccount(account, rollAwards) || rollRes;
+        }
+      } catch (e) {
+        account.log(`抽奖任务失败: ${e.message}`);
+        if (isRiskError(e)) riskStopped = true;
       }
-    } catch (e) {
-      account.log(`抽奖任务失败: ${e.message}`);
+    } else {
+      account.log("🚨 检测到风控信号，跳过抽奖任务");
     }
 
     // 校验整体账号状态
@@ -125,6 +139,9 @@ async function run() {
       }
     } else {
       taskLines.push(`- 📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
+    }
+    if (riskStopped) {
+      taskLines.push(`- 🚨 **检测到风控信号，已停止该账号后续任务（领券/抽奖已跳过）**`);
     }
     const unsupportedTasks = Array.isArray(signRes?.unsupportedTasks) ? signRes.unsupportedTasks : [];
     if (unsupportedTasks.length) {
@@ -171,7 +188,7 @@ async function run() {
         : "未发现进行中的抽奖活动"}`,
       ``,
       `---`,
-      `🎉 **总体运行状态**：${isOk ? "✅ 每日任务 100% 成功完成！" : "⚠️ 存在部分任务未完成"}`,
+      `🎉 **总体运行状态**：${riskStopped ? "🚨 触发风控，已停止操作" : isOk ? "✅ 每日任务 100% 成功完成！" : "⚠️ 存在部分任务未完成"}`,
     ].join("\n");
 
     summaryList.push(accountReport);
