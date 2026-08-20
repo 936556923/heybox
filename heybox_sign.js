@@ -513,7 +513,7 @@ function isPostContentTask(task) {
 }
 
 function isSupportedTask(task) {
-  return isDailyTask(task) || isShareTask(task) || isPostContentTask(task) || Boolean(TASK_HANDLERS[task.taskId]);
+  return isShareTask(task);
 }
 
 async function executeTask(task, client, fetchSnapshotFn) {
@@ -655,10 +655,10 @@ async function runAccount(account, runtime) {
   account.log(`当前盒币: ${snapshot.coin || "未知"} ≈ ${coinValue}￥`);
   account.log(`当前等级: Lv.${snapshot.level || "未知"}${expStr}`);
   account.log(`当前盒电: ${snapshot.battery || "未知"}`);
-  const waiting = snapshot.tasks.filter((task) => isDailyTask(task) && task.state === WAITING_STATE);
-  // 收集所有等待中但无法自动完成的任务（如限时任务"发表游戏评价"、灵感推荐），便于报告透明展示
+  const waiting = snapshot.tasks.filter((task) => isShareTask(task) && task.state === WAITING_STATE);
+  // 收集所有等待中但无法自动完成的任务，忽略已主动关闭的签到任务
   for (const task of snapshot.tasks) {
-    if (task.state === WAITING_STATE && !isSupportedTask(task)) {
+    if (task.state === WAITING_STATE && !isSupportedTask(task) && !isSignTask(task)) {
       unsupported.add(task.title || taskKey(task));
     }
   }

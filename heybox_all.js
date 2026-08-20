@@ -143,7 +143,7 @@ async function run() {
         taskLines.push(`- ${icon} **${t.title}**：${status}${award}`);
       }
     } else {
-      taskLines.push(`- 📌 **每日签到与分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
+      taskLines.push(`- 📌 **每日分享任务**：${isOk ? "✅ 全部完成" : "⚠️ 未完成"}`);
     }
     if (riskStopped) {
       taskLines.push(`- 🚨 **检测到风控信号，已停止该账号后续任务（领券/抽奖已跳过）**`);
